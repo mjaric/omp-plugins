@@ -1,0 +1,16 @@
+{
+  "name": "token-rate",
+  "version": "0.1.0",
+  "description": "Shows tokens/sec generation rate in the status area during model responses",
+  "type": "module",
+  "omp": {
+    "extensions": ["src/index.ts"]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "latest"
+  }
+}

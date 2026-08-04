@@ -1,0 +1,27 @@
+{
+  "name": "mjaric-omp-plugins",
+  "owner": {
+    "name": "Mladen Jaric"
+  },
+  "metadata": {
+    "description": "Personal omp plugins",
+    "version": "0.1.0",
+    "pluginRoot": "plugins"
+  },
+  "plugins": [
+    {
+      "name": "token-rate",
+      "description": "Shows tokens/sec generation rate in the status area during model responses",
+      "source": "./token-rate",
+      "category": "productivity",
+      "version": "0.1.0"
+    },
+    {
+      "name": "remote-memory",
+      "description": "Remote memory backend for omp agents — recall, retain, reflect, share across machines",
+      "source": "./remote-memory",
+      "category": "development",
+      "version": "0.0.1"
+    }
+  ]
+}

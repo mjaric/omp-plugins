@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "remote-memory": {
+      "type": "http",
+      "url": "${MEMORY_API_URL}",
+      "headers": {
+        "Authorization": "Bearer ${MEMORY_API_TOKEN}"
+      }
+    }
+  }
+}

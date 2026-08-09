@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getBoardState, moveCard } from "./board";
+import { fetchStatusField, getBoardState, moveCard } from "./board";
 import type { SingleProjectConfig } from "../config/forge-toml";
 import type { ForgeGitHubClient } from "./client";
 
@@ -173,5 +173,76 @@ describe("board.moveCard", () => {
 		});
 
 		expect(moveCard(client, makeConfig(), 999, "ready")).rejects.toThrow("not found on board");
+	});
+});
+
+describe("board.fetchStatusField", () => {
+	/** Real GitHub payload shape: non-single-select fields arrive as empty
+	 * objects ({}), so most nodes lack id/name/options entirely. */
+	const nodes = [
+		{},
+		{},
+		{
+			id: "PVTSSF_status",
+			name: "Status",
+			options: [
+				{ id: "opt_todo", name: "Todo" },
+				{ id: "opt_done", name: "Done" },
+			],
+		},
+		{},
+		{ id: "PVTSSF_slice", name: "Slice", options: [] },
+		{},
+	] as Array<{ id?: string; name?: string; options?: Array<{ id: string; name: string }> }>;
+
+	it("returns the Status field, skipping nodes without name/options", async () => {
+		const client = mockClient({
+			default: { node: { fields: { nodes } } },
+		});
+
+		const result = await fetchStatusField(client, "PVT_test");
+
+		expect(result).toEqual({
+			fieldId: "PVTSSF_status",
+			options: [
+				{ id: "opt_todo", name: "Todo" },
+				{ id: "opt_done", name: "Done" },
+			],
+		});
+	});
+
+	it("matches the field name case-insensitively", async () => {
+		const client = mockClient({
+			default: {
+				node: {
+					fields: {
+						nodes: [{ id: "F1", name: "STATUS", options: [{ id: "o", name: "X" }] }],
+					},
+				},
+			},
+		});
+
+		const result = await fetchStatusField(client, "PVT_test");
+		expect(result?.fieldId).toBe("F1");
+	});
+
+	it("returns null when no Status single-select exists", async () => {
+		const client = mockClient({
+			default: {
+				node: {
+					fields: {
+						nodes: [{}, { id: "F2", name: "Priority", options: [] }],
+					},
+				},
+			},
+		});
+
+		expect(await fetchStatusField(client, "PVT_test")).toBeNull();
+	});
+
+	it("returns null when the board node is inaccessible", async () => {
+		const client = mockClient({ default: { node: null } });
+
+		expect(await fetchStatusField(client, "PVT_gone")).toBeNull();
 	});
 });

@@ -137,6 +137,65 @@ export async function getBoardState(
 	return parseProjectNode(result.node);
 }
 
+/** Status single-select field discovered on a project board. */
+export interface StatusFieldInfo {
+	fieldId: string;
+	options: Array<{ id: string; name: string }>;
+}
+
+/** GraphQL query for the Status field of a project board. */
+const FIELDS_QUERY = `
+	query($id: ID!) {
+		node(id: $id) {
+			... on ProjectV2 {
+				fields(first: 50) {
+					nodes {
+						... on ProjectV2FieldCommon { id name }
+						... on ProjectV2SingleSelectField { options { id name } }
+					}
+				}
+			}
+		}
+	}`;
+
+/**
+ * Find the "Status" single-select field on a Projects v2 board.
+ *
+ * Non-single-select fields come back without `options` (and, under a
+ * SingleSelectField-only fragment, without id/name at all), so nodes with
+ * a missing name or options are skipped. Returns `null` when the board is
+ * unreachable or has no Status field.
+ */
+export async function fetchStatusField(
+	client: ForgeGitHubClient,
+	projectId: string,
+): Promise<StatusFieldInfo | null> {
+	const result = await client.graphql<{
+		node: {
+			fields: {
+				nodes: Array<{
+					id?: string;
+					name?: string;
+					options?: Array<{ id: string; name: string }>;
+				}>;
+			};
+		} | null;
+	}>(FIELDS_QUERY, { id: projectId });
+
+	if (result.node === null) return null;
+
+	for (const field of result.node.fields.nodes) {
+		if (
+			field.id !== undefined &&
+			field.name?.toLowerCase() === "status" &&
+			field.options !== undefined
+		) {
+			return { fieldId: field.id, options: field.options };
+		}
+	}
+	return null;
+}
+
 /** Find the project item id for a given issue number. */
 async function findItemId(
 	client: ForgeGitHubClient,

@@ -16,7 +16,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { renderBoard, type BoardRenderer } from "./board-render";
-import { getBoardState, moveCard } from "../github/board";
+import { fetchStatusField, getBoardState, moveCard } from "../github/board";
 import { getGitHubClient, type ForgeGitHubClient } from "../github/client";
 import { loadConfig } from "../config/forge-config-loader";
 import type { SingleProjectConfig, ForgeConfig } from "../config/forge-toml";
@@ -37,7 +37,6 @@ import {
 	checkBoardFieldId,
 	checkBoardOptions,
 	extractGateBinaries,
-	fetchBoardFieldInfo,
 	assembleReport,
 	formatDoctorReport,
 	type DoctorCheck,
@@ -453,15 +452,7 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 	const client = requireClient(ctx);
 	if (client === null) return;
 
-	// Discover repos from git remote
 	let repo = "";
-	try {
-		const result = await ctx.waitForIdle().then(() => null).catch(() => null);
-		void result;
-	} catch { void 0; }
-
-	// Use exec to get git remote
-	// For now, ask the user
 	if (ctx.hasUI) {
 		repo = await ctx.ui.input("GitHub repo (owner/name):", "owner/name") ?? "";
 	}
@@ -496,12 +487,17 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 			question: "Which board tracks this project?",
 			options: projects.map((p) => ({ label: p.title, description: p.id })),
 		}]);
-		if (result !== undefined && result.kind === "submit") {
-			const firstResult = result.results[0];
-			const selectedTitle = firstResult?.selectedOptions[0];
-			if (selectedTitle !== undefined) {
-				selectedProject = projects.find((p) => p.title === selectedTitle);
-			}
+		if (result === undefined) {
+			if (ctx.hasUI) ctx.ui.notify("forge setup: cancelled.", "warning");
+			return;
+		}
+		if (result.kind === "chat") {
+			if (ctx.hasUI) ctx.ui.notify("forge setup: cancelled — dialog handed to chat.", "warning");
+			return;
+		}
+		const selectedTitle = result.results[0]?.selectedOptions[0];
+		if (selectedTitle !== undefined) {
+			selectedProject = projects.find((p) => p.title === selectedTitle);
 		}
 	} else {
 		selectedProject = projects[0];
@@ -512,36 +508,8 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 		return;
 	}
 
-	// Query project fields to find Status single-select
-	const fieldsQuery = `
-		query($id: ID!) {
-			node(id: $id) {
-				... on ProjectV2 {
-					fields(first: 50) {
-						nodes {
-							... on ProjectV2SingleSelectField { id name options { id name } }
-						}
-					}
-				}
-			}
-		}`;
-	const fieldsResult = await client.graphql<{
-		node: {
-			fields: {
-				nodes: Array<{
-					id: string;
-					name: string;
-					options?: Array<{ id: string; name: string }>;
-				}>;
-			};
-		};
-	}>(fieldsQuery, { id: selectedProject.id });
-
-	const statusField = fieldsResult.node.fields.nodes.find(
-		(f) => f.name.toLowerCase() === "status" && f.options !== undefined,
-	);
-
-	if (statusField === undefined || statusField.options === undefined) {
+	const statusField = await fetchStatusField(client, selectedProject.id);
+	if (statusField === null) {
 		if (ctx.hasUI) ctx.ui.notify("forge setup: no Status single-select field found on project.", "error");
 		return;
 	}
@@ -549,26 +517,21 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 	// Map option names to forge's expected names
 	const findOpt = (names: string[]): string => {
 		for (const name of names) {
-			const opt = statusField.options?.find(
+			const opt = statusField.options.find(
 				(o) => o.name.toLowerCase() === name.toLowerCase(),
 			);
 			if (opt !== undefined) return opt.id;
 		}
-		return statusField.options?.[0]?.id ?? "";
+		return statusField.options[0]?.id ?? "";
 	};
 
-	// Detect stack for gate defaults
 	const cwd = ctx.cwd;
-	let gate = ["cargo test", "cargo clippy --all-targets -- -D warnings"];
-	try {
-		writeFileSync(join(cwd, ".stackcheck"), ""); // trigger fs check
-	} catch { void 0; }
-	// Simplified: assume Rust for now — full stack detection is a future enhancement
+	const gate = ["cargo test", "cargo clippy --all-targets -- -D warnings"];
 
 	const toml = [
 		`repo = "${repo}"`,
 		`project_id = "${selectedProject.id}"`,
-		`status_field_id = "${statusField.id}"`,
+		`status_field_id = "${statusField.fieldId}"`,
 		`status_options = { backlog = "${findOpt(["Backlog"])}", ready = "${findOpt(["Ready"])}", in_progress = "${findOpt(["In progress", "In Progress"])}", in_review = "${findOpt(["In review", "In Review"])}", done = "${findOpt(["Done"])}" }`,
 		`gate = [${gate.map((g) => `"${g}"`).join(", ")}]`,
 		`spec_id_prefix = "REQ"`,
@@ -761,7 +724,7 @@ async function cmdDoctor(
 	const client = getGitHubClient();
 	if (client !== null && config !== null && "projects" in config === false) {
 		const singleConfig = config as SingleProjectConfig;
-		const fieldInfo = await fetchBoardFieldInfo(client, singleConfig.projectId);
+		const fieldInfo = await fetchStatusField(client, singleConfig.projectId);
 		checks.push(checkBoardExists(fieldInfo, singleConfig));
 		checks.push(checkBoardFieldId(fieldInfo, singleConfig));
 		checks.push(checkBoardOptions(fieldInfo, singleConfig));
@@ -811,7 +774,7 @@ async function offerFixes(
 			);
 			if (!confirmed) continue;
 
-			const fieldInfo = await fetchBoardFieldInfo(client, config.projectId);
+			const fieldInfo = await fetchStatusField(client, config.projectId);
 			if (fieldInfo === null) {
 				ctx.ui.notify("forge doctor: cannot read board — fix skipped.", "error");
 				continue;

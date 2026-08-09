@@ -13,7 +13,7 @@
  */
 
 import type { SingleProjectConfig, StatusOptions } from "../config/forge-toml";
-import type { ForgeGitHubClient } from "../github/client";
+import type { StatusFieldInfo } from "../github/board";
 import { resolveGhToken } from "../github/auth";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -51,10 +51,7 @@ export interface DoctorReport {
 }
 
 /** Board field data from GitHub (for option comparison). */
-export interface BoardFieldInfo {
-	fieldId: string;
-	options: Array<{ id: string; name: string }>;
-}
+export type BoardFieldInfo = StatusFieldInfo;
 
 // --- Local environment checks ---
 
@@ -123,48 +120,9 @@ export function extractGateBinaries(gate: string[]): string[] {
 
 // --- GitHub board checks ---
 
-/** Fetch board field info from GitHub to compare with config. */
-export async function fetchBoardFieldInfo(
-	client: ForgeGitHubClient,
-	projectId: string,
-): Promise<BoardFieldInfo | null> {
-	const query = `
-		query($id: ID!) {
-			node(id: $id) {
-				... on ProjectV2 {
-					fields(first: 50) {
-						nodes {
-							... on ProjectV2SingleSelectField { id name options { id name } }
-						}
-					}
-				}
-			}
-		}`;
-	const result = await client.graphql<{
-		node: {
-			fields: {
-				nodes: Array<{
-					id: string;
-					name: string;
-					options?: Array<{ id: string; name: string }>;
-				}>;
-			};
-		} | null;
-	}>(query, { id: projectId });
-
-	if (result.node === null) return null;
-
-	const statusField = result.node.fields.nodes.find(
-		(f) => f.name.toLowerCase() === "status" && f.options !== undefined,
-	);
-	if (statusField === undefined || statusField.options === undefined) return null;
-
-	return { fieldId: statusField.id, options: statusField.options };
-}
-
 /** Check 4: Board project exists and is accessible. */
 export function checkBoardExists(
-	fieldInfo: BoardFieldInfo | null,
+	fieldInfo: StatusFieldInfo | null,
 	config: SingleProjectConfig,
 ): DoctorCheck {
 	const exists = fieldInfo !== null;
@@ -182,7 +140,7 @@ export function checkBoardExists(
 
 /** Check 5: Configured status_field_id matches the board's current field. */
 export function checkBoardFieldId(
-	fieldInfo: BoardFieldInfo | null,
+	fieldInfo: StatusFieldInfo | null,
 	config: SingleProjectConfig,
 ): DoctorCheck {
 	if (fieldInfo === null) {
@@ -224,7 +182,7 @@ const STATUS_NAME_PATTERNS: Record<keyof StatusOptions, string[]> = {
 
 /** Check 6: Configured status_options match the board's current options. */
 export function checkBoardOptions(
-	fieldInfo: BoardFieldInfo | null,
+	fieldInfo: StatusFieldInfo | null,
 	config: SingleProjectConfig,
 ): DoctorCheck {
 	if (fieldInfo === null) {
@@ -256,7 +214,7 @@ export function checkBoardOptions(
 /** Find which status options in config don't match the board. */
 export function findOptionMismatches(
 	configOptions: StatusOptions,
-	fieldInfo: BoardFieldInfo,
+	fieldInfo: StatusFieldInfo,
 ): string[] {
 	const mismatches: string[] = [];
 	const boardByName = new Map<string, string>();

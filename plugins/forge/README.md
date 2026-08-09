@@ -34,10 +34,13 @@ tokens for mechanical work**. The LLM is invoked only for reasoning tasks: decom
 | `/forge promote [--project name]` | — | Find unblocked + acceptance-complete → move to Ready |
 | `/forge decide <N> <decision text>` | — | Record decision, close issue, report unblocked |
 | `/forge status` | — | One-liner per project (multi-repo) |
+| `/forge doctor` | — | Diagnose environment + board sync; offer fixes for stale IDs |
 | `/forge dispatch <N> [--project name]` | TS + LLM | Verify blockers, move card, emit worker prompt |
 | `/forge round [--project name]` | TS + LLM | Full cycle: dispatch → review → sync → promote |
 | `/forge decompose <slice> [--project name]` | LLM | Spec slice → GitHub issues |
 | `/forge review <N> [--project name]` | LLM | Review PR against acceptance criteria |
+| `/forge thinking-report` | — | Thinking-level telemetry analysis (requires `self_improvement`) |
+| `/forge retrospect [--milestone N]` | — | Milestone retrospective: findings + recommendations (requires `self_improvement`) |
 
 ## Setup
 
@@ -83,11 +86,12 @@ Commands accept `--project <name>` to target a specific project.
 
 ## Auth
 
-Forge reads the same token as `gh` CLI:
+Forge resolves a GitHub token in this order:
 
 1. `~/.config/gh/hosts.yml` (the file `gh auth login` writes)
-2. `GH_TOKEN` environment variable
-3. `GITHUB_TOKEN` environment variable
+2. `gh auth token` (covers Keychain-stored credentials on macOS)
+3. `GH_TOKEN` environment variable
+4. `GITHUB_TOKEN` environment variable
 
 ## Requirements
 
@@ -101,23 +105,62 @@ Forge reads the same token as `gh` CLI:
 ```
 src/
 ├── index.ts                    # extension factory — registers /forge command
+│                               # + telemetry handler (when self_improvement = true)
 ├── commands/
-│   ├── forge-command.ts        # subcommand routing + all 9 handlers
+│   ├── forge-command.ts        # subcommand routing + all handlers
 │   └── board-render.ts         # table formatting (testable without ExtensionAPI)
 ├── config/
 │   ├── forge-toml.ts           # hand-rolled TOML parser/writer for .forge.toml
 │   └── forge-config-loader.ts  # loads .forge.toml from cwd
-└── github/
-    ├── auth.ts                 # token resolution: hosts.yml → env
-    ├── client.ts               # shared Octokit instance (REST + GraphQL)
-    ├── board.ts                # Projects v2: getBoardState, moveCard, addIssueToBoard
-    ├── issue.ts                # blockers, acceptance parsing, linked PR, close
-    └── pr.ts                   # CI status, review contract assembly
+├── doctor/
+│   └── doctor.ts               # environment + board sync diagnostics, fix suggestions
+├── github/
+│   ├── auth.ts                 # token resolution: hosts.yml → gh CLI → env
+│   ├── client.ts               # shared Octokit instance (REST + GraphQL)
+│   ├── board.ts                # Projects v2: getBoardState, moveCard, addIssueToBoard
+│   ├── issue.ts                # blockers, acceptance parsing, linked PR, close
+│   └── pr.ts                   # CI status, review contract assembly
+├── retrospect/
+│   └── retrospect.ts           # milestone retrospective: GitHub + telemetry → findings
+└── telemetry/
+    ├── types.ts                # ThinkingTelemetryEntry, pattern types
+    └── telemetry.ts            # turn_end handler, analysis, report formatting
 ```
 
-## Deferred to v2
+## Self-improvement (v2, opt-in)
 
-- **Retrospective** (`/forge retrospect`): analyze GitHub + session logs after milestone
-- **Thinking-level oversight**: per-turn telemetry, over/underthinking detection
-- **Agent evolution**: propose instruction/skill corrections from session analysis
+Self-improvement features are **off by default**. Enable them explicitly in
+`.forge.toml`:
+
+```toml
+self_improvement = true
+```
+
+When enabled:
+
+- **Telemetry**: per-turn records (thinking level, tool calls/errors, retries)
+  are appended to the session journal. `/forge thinking-report` analyzes them
+  for overthinking / underthinking / high-retry-rate patterns.
+- **Retrospective**: `/forge retrospect [--milestone N]` combines GitHub
+  delivery data (done issues, PR linkage, CI status) with session telemetry
+  into findings and recommendations for agent prompts, skills, and workflow.
+
+## Doctor (new machine / board drift)
+
+Moved to a new computer, or suspect the board changed? Run:
+
+```
+/forge doctor
+```
+
+Checks: `.forge.toml` presence, GitHub auth, gate binaries on PATH, board
+accessibility, status field ID currency, and status option IDs against the
+live board. When stale board IDs are detected, forge offers to rewrite
+`.forge.toml` with current values — one confirmation per fix.
+
+## Deferred to v3
+
+- **Agent evolution loop**: apply retrospective recommendations as git diffs
+  to worker prompts / skills / spec sections (human reviews, forge commits)
 - **Cross-project learning**: insights from project A pre-seed instructions for project B
+- **Auto thinking-level adjustment**: raise/lower level per task type based on telemetry patterns

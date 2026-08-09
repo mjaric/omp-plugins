@@ -17,9 +17,9 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { renderBoard, type BoardRenderer } from "./board-render";
 import { getBoardState, moveCard } from "../github/board";
-import { getGitHubClient } from "../github/client";
+import { getGitHubClient, type ForgeGitHubClient } from "../github/client";
 import { loadConfig } from "../config/forge-config-loader";
-import type { SingleProjectConfig } from "../config/forge-toml";
+import type { SingleProjectConfig, ForgeConfig } from "../config/forge-toml";
 import { getBlockers, getAcceptanceStatus, closeIssueWithComment, getIssueBody } from "../github/issue";
 import { buildReviewContract, formatReviewContract } from "../github/pr";
 import { writeFileSync } from "node:fs";
@@ -29,6 +29,20 @@ import {
 	formatTelemetryReport,
 } from "../telemetry/telemetry";
 import { generateRetrospect } from "../retrospect/retrospect";
+import {
+	checkConfigExists,
+	checkGhAuth,
+	checkBinary,
+	checkBoardExists,
+	checkBoardFieldId,
+	checkBoardOptions,
+	extractGateBinaries,
+	fetchBoardFieldInfo,
+	assembleReport,
+	formatDoctorReport,
+	type DoctorCheck,
+} from "../doctor/doctor";
+import { serializeForgeToml } from "../config/forge-toml";
 import { join } from "node:path";
 
 /** Parse raw args string into [subcommand, ...rest]. */
@@ -37,12 +51,12 @@ export function parseArgs(raw: string): { sub: string; args: string[] } {
 	return { sub: parts[0] ?? "", args: parts.slice(1) };
 }
 
-export const USAGE = "Usage: /forge <setup|board|decompose|dispatch|review|decide|round|promote|status|thinking-report|retrospect> [args]";
+export const USAGE = "Usage: /forge <setup|board|decompose|dispatch|review|decide|round|promote|status|thinking-report|retrospect|doctor> [args]";
 
 const KNOWN_SUBCOMMANDS = new Set([
 	"setup", "board", "decompose", "dispatch", "review",
 	"decide", "round", "promote", "status",
-	"thinking-report", "retrospect",
+	"thinking-report", "retrospect", "doctor",
 ]);
 
 /** Register the /forge command. */
@@ -80,6 +94,7 @@ async function routeSubcommand(
 		case "status":           return cmdStatus(ctx);
 		case "thinking-report":  return cmdThinkingReport(ctx);
 		case "retrospect":       return cmdRetrospect(args, pi, ctx);
+		case "doctor":           return cmdDoctor(pi, ctx);
 		default: return;
 	}
 }
@@ -717,4 +732,132 @@ function formatRetrospectReport(report: { summary: string; findings: string[]; r
 		}
 	}
 	return lines.join("\n");
+}
+
+// --- /forge doctor (v2: environment + board sync diagnostics) ---
+
+async function cmdDoctor(
+	pi: ExtensionAPI, ctx: ExtensionCommandContext,
+): Promise<void> {
+	const checks: DoctorCheck[] = [];
+
+	// --- Local checks ---
+	checks.push(checkConfigExists(ctx.cwd));
+	checks.push(checkGhAuth());
+
+	const config = loadConfig(ctx.cwd);
+	if (config !== null) {
+		const singleConfig = "projects" in config ? null : config;
+		if (singleConfig !== null) {
+			const gateBins = extractGateBinaries(singleConfig.gate);
+			for (const bin of gateBins) {
+				const available = await checkToolAvailable(pi, bin);
+				checks.push(checkBinary(bin, available));
+			}
+		}
+	}
+
+	// --- GitHub checks ---
+	const client = getGitHubClient();
+	if (client !== null && config !== null && "projects" in config === false) {
+		const singleConfig = config as SingleProjectConfig;
+		const fieldInfo = await fetchBoardFieldInfo(client, singleConfig.projectId);
+		checks.push(checkBoardExists(fieldInfo, singleConfig));
+		checks.push(checkBoardFieldId(fieldInfo, singleConfig));
+		checks.push(checkBoardOptions(fieldInfo, singleConfig));
+	}
+
+	const report = assembleReport(checks);
+	const text = formatDoctorReport(report);
+
+	if (ctx.hasUI) {
+		ctx.ui.notify(text, report.errors > 0 ? "error" : "warning");
+	}
+
+	// Offer fixes for fixable checks
+	const fixableChecks = checks.filter((c) => c.fixable && c.severity !== "ok");
+	if (fixableChecks.length > 0 && ctx.hasUI) {
+		await offerFixes(fixableChecks, client, config, ctx);
+	}
+}
+
+/** Check if a binary is available on PATH. */
+async function checkToolAvailable(
+	pi: ExtensionAPI,
+	binary: string,
+): Promise<boolean> {
+	try {
+		const result = await pi.exec("which", [binary]);
+		return result.code === 0;
+	} catch {
+		return false;
+	}
+}
+
+/** Offer to fix fixable checks one by one, with confirmation. */
+async function offerFixes(
+	fixableChecks: DoctorCheck[],
+	client: ForgeGitHubClient | null,
+	config: ForgeConfig | null,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
+	if (client === null || config === null || "projects" in config) return;
+
+	for (const check of fixableChecks) {
+		if (check.id === "board-field-id" || check.id === "board-options") {
+			const confirmed = await ctx.ui.confirm(
+				"forge doctor",
+				`${check.description}:\n${check.detail}\n\nFix .forge.toml with current board values?`,
+			);
+			if (!confirmed) continue;
+
+			const fieldInfo = await fetchBoardFieldInfo(client, config.projectId);
+			if (fieldInfo === null) {
+				ctx.ui.notify("forge doctor: cannot read board — fix skipped.", "error");
+				continue;
+			}
+
+			const fixed = updateConfigFromBoard(config, fieldInfo);
+			writeFileSync(
+				join(ctx.cwd, ".forge.toml"),
+				serializeForgeToml(fixed),
+			);
+			ctx.ui.notify(`forge doctor: fixed '${check.description}'.`, "info");
+		}
+	}
+}
+
+/** Update config field_id and status_options from current board state. */
+function updateConfigFromBoard(
+	config: SingleProjectConfig,
+	fieldInfo: { fieldId: string; options: Array<{ id: string; name: string }> },
+): SingleProjectConfig {
+	const updated: SingleProjectConfig = {
+		...config,
+		statusFieldId: fieldInfo.fieldId,
+		statusOptions: resolveStatusOptions(config.statusOptions, fieldInfo.options),
+	};
+	return updated;
+}
+
+/** Resolve status options from board, keeping config as fallback. */
+function resolveStatusOptions(
+	current: SingleProjectConfig["statusOptions"],
+	boardOptions: Array<{ id: string; name: string }>,
+): SingleProjectConfig["statusOptions"] {
+	const byName = new Map(boardOptions.map((o) => [o.name.toLowerCase().replace(/[\s_-]/g, ""), o.id]));
+	const find = (patterns: string[]): string => {
+		for (const p of patterns) {
+			const id = byName.get(p);
+			if (id !== undefined) return id;
+		}
+		return "";
+	};
+	return {
+		backlog: find(["backlog"]),
+		ready: find(["ready"]),
+		inProgress: find(["inprogress"]),
+		inReview: find(["inreview"]),
+		done: find(["done"]),
+	};
 }

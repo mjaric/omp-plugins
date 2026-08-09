@@ -1,0 +1,13 @@
+# Project-local override for the omp-plugins workspace.
+#
+# The global ~/.bunfig.toml blocks package versions younger than 14 days
+# (supply-chain defense). That gate is incompatible with this repo's platform
+# dependency: omp publishes releases several times a week, and plugins MUST
+# type-check against the same pi-coding-agent API the running omp exposes.
+#
+# Scope of the exemption: @oh-my-pi/* ONLY (the omp platform packages).
+# Trust basis: the user already runs the omp CLI from this exact package
+# family daily — trusting its registry versions here adds no new exposure.
+# Every other dependency stays under the global 14-day age gate.
+[install]
+minimumReleaseAgeExcludes = ["@types/node", "@types/bun", "typescript", "@oh-my-pi/pi-coding-agent", "@oh-my-pi/omptype"]

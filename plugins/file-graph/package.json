@@ -1,7 +1,7 @@
 {
-  "name": "remote-memory",
+  "name": "file-graph",
   "version": "0.0.1",
-  "description": "Remote memory backend for omp agents — recall, retain, reflect, share across machines",
+  "description": "Workspace knowledge-graph indexer for markdown — outlines, entities, typed cross-file relations",
   "type": "module",
   "omp": {
     "extensions": ["src/index.ts"]

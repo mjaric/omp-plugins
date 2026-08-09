@@ -1,7 +1,7 @@
 {
-  "name": "remote-memory",
+  "name": "session-memory",
   "version": "0.0.1",
-  "description": "Remote memory backend for omp agents — recall, retain, reflect, share across machines",
+  "description": "Live session index with prefix-safe recall — chunk, embed, and re-inject only what isn't already in context",
   "type": "module",
   "omp": {
     "extensions": ["src/index.ts"]
@@ -11,6 +11,7 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "@oh-my-pi/omptype": "17.2.8",
     "@oh-my-pi/pi-coding-agent": "17.2.8"
   }
 }

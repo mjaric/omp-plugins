@@ -8,9 +8,9 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "bun test"
   },
   "devDependencies": {
-    "@oh-my-pi/pi-coding-agent": "latest"
+    "@oh-my-pi/pi-coding-agent": "17.2.8"
   }
 }

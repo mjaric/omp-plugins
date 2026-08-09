@@ -22,6 +22,20 @@
       "source": "./remote-memory",
       "category": "development",
       "version": "0.0.1"
+    },
+    {
+      "name": "file-graph",
+      "description": "Workspace knowledge-graph indexer for markdown — outlines, entities, typed cross-file relations",
+      "source": "./file-graph",
+      "category": "development",
+      "version": "0.0.1"
+    },
+    {
+      "name": "session-memory",
+      "description": "Live session index with prefix-safe recall — injects only what's not already in context, keeps prompt-cache prefix intact",
+      "source": "./session-memory",
+      "category": "development",
+      "version": "0.0.1"
     }
   ]
 }

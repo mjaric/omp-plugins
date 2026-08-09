@@ -10,6 +10,7 @@
   "scripts": {
     "check": "tsc --noEmit && oxlint",
     "fmt": "oxfmt",
+    "lint": "oxlint --max-warnings=0",
     "test": "bun test"
   },
   "devDependencies": {

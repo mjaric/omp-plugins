@@ -26,6 +26,12 @@ export interface ProjectConfig {
 	specIdPrefix?: string;
 	specIndex?: string;
 	worktreeRoot?: string;
+	/**
+	 * v2 self-improvement gate. When `true`, enables `/forge retrospect`,
+	 * thinking-level telemetry, and agent evolution features.
+	 * Default: `false` (opt-in). Must be explicitly set by the user.
+	 */
+	selfImprovement?: boolean;
 }
 
 /** Single-project config: one repo, one board, flat fields. */
@@ -124,6 +130,25 @@ function setOptional(
 	}
 }
 
+/** Parse `true`/`false` literal into boolean. */
+function parseBoolValue(raw: string): boolean {
+	const trimmed = raw.trim();
+	if (trimmed === "true") return true;
+	if (trimmed === "false") return false;
+	throw new Error(`expected boolean (true/false), got: ${trimmed}`);
+}
+
+/** Set an optional boolean field on a config object only when raw value is defined. */
+function setOptionalBool(
+	obj: SingleProjectConfig | ProjectConfig,
+	key: "selfImprovement",
+	raw: string | undefined,
+): void {
+	if (raw !== undefined) {
+		obj[key] = parseBoolValue(raw);
+	}
+}
+
 function buildProjectConfig(map: Record<string, string>): ProjectConfig {
 	const requireField = (key: string): string => {
 		const raw = map[key];
@@ -158,6 +183,7 @@ function buildProjectConfig(map: Record<string, string>): ProjectConfig {
 	setOptional(config, "specIdPrefix", optionalString("spec_id_prefix"));
 	setOptional(config, "specIndex", optionalString("spec_index"));
 	setOptional(config, "worktreeRoot", optionalString("worktree_root"));
+	setOptionalBool(config, "selfImprovement", map["self_improvement"]);
 
 	return config;
 }
@@ -216,6 +242,7 @@ export function parseForgeToml(toml: string): ForgeConfig {
 	setOptional(result, "specIdPrefix", project.specIdPrefix);
 	setOptional(result, "specIndex", project.specIndex);
 	setOptional(result, "worktreeRoot", project.worktreeRoot);
+	setOptionalBool(result, "selfImprovement", project.selfImprovement !== undefined ? String(project.selfImprovement) : undefined);
 	return result;
 }
 
@@ -277,6 +304,9 @@ function serializeSingleFields(config: SingleProjectConfig | ProjectConfig): str
 	}
 	if (config.worktreeRoot !== undefined) {
 		lines.push(`worktree_root = "${config.worktreeRoot}"`);
+	}
+	if (config.selfImprovement !== undefined) {
+		lines.push(`self_improvement = ${config.selfImprovement}`);
 	}
 	return lines;
 }

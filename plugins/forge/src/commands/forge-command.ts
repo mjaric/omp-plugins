@@ -1,7 +1,6 @@
 /**
  * `/forge` slash command — routes subcommands.
  *
- * Subcommands:
  *   setup     — interactive config discovery + .forge.toml generation
  *   board     — render board table grouped by Status
  *   decompose — LLM: create issues from spec slice
@@ -11,6 +10,8 @@
  *   round     — orchestrate: dispatch → review → sync → promote
  *   promote   — find unblocked + acceptance-complete → move to Ready
  *   status    — one-liner per project (multi-repo)
+ *   thinking-report — [v2] analyze thinking-level telemetry (requires self_improvement)
+ *   retrospect      — [v2] milestone retrospective from GitHub + session history (requires self_improvement)
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
@@ -22,6 +23,12 @@ import type { SingleProjectConfig } from "../config/forge-toml";
 import { getBlockers, getAcceptanceStatus, closeIssueWithComment, getIssueBody } from "../github/issue";
 import { buildReviewContract, formatReviewContract } from "../github/pr";
 import { writeFileSync } from "node:fs";
+import {
+	extractTelemetryEntries,
+	analyzeTelemetry,
+	formatTelemetryReport,
+} from "../telemetry/telemetry";
+import { generateRetrospect } from "../retrospect/retrospect";
 import { join } from "node:path";
 
 /** Parse raw args string into [subcommand, ...rest]. */
@@ -30,11 +37,12 @@ export function parseArgs(raw: string): { sub: string; args: string[] } {
 	return { sub: parts[0] ?? "", args: parts.slice(1) };
 }
 
-export const USAGE = "Usage: /forge <setup|board|decompose|dispatch|review|decide|round|promote|status> [args]";
+export const USAGE = "Usage: /forge <setup|board|decompose|dispatch|review|decide|round|promote|status|thinking-report|retrospect> [args]";
 
 const KNOWN_SUBCOMMANDS = new Set([
 	"setup", "board", "decompose", "dispatch", "review",
 	"decide", "round", "promote", "status",
+	"thinking-report", "retrospect",
 ]);
 
 /** Register the /forge command. */
@@ -69,7 +77,9 @@ async function routeSubcommand(
 		case "round":     return cmdRound(args, ctx);
 		case "decompose": return cmdDecompose(args, pi, ctx);
 		case "review":    return cmdReview(args, pi, ctx);
-		case "status":    return cmdStatus(ctx);
+		case "status":           return cmdStatus(ctx);
+		case "thinking-report":  return cmdThinkingReport(ctx);
+		case "retrospect":       return cmdRetrospect(args, pi, ctx);
 		default: return;
 	}
 }
@@ -598,4 +608,113 @@ function countByStatus(state: { items: Array<{ status: string }> }): Record<stri
 		counts[item.status] = (counts[item.status] ?? 0) + 1;
 	}
 	return counts;
+}
+
+
+// --- v2: self-improvement gate helper ---
+
+/** Check if self_improvement is enabled. Returns config if yes, null if not. */
+function requireSelfImprovement(ctx: ExtensionCommandContext): SingleProjectConfig | null {
+	const config = loadConfig(ctx.cwd);
+	if (config === null) {
+		if (ctx.hasUI) ctx.ui.notify("forge: .forge.toml not found. Run `/forge setup` first.", "error");
+		return null;
+	}
+	if ("projects" in config) {
+		const enabled = config.projects.find((p) => p.selfImprovement === true);
+		if (enabled === undefined) {
+			if (ctx.hasUI) ctx.ui.notify("forge: this command requires `self_improvement = true` in .forge.toml.", "error");
+			return null;
+		}
+		const { path: _path, ...single } = enabled;
+		void _path;
+		return single;
+	}
+	if (config.selfImprovement !== true) {
+		if (ctx.hasUI) ctx.ui.notify("forge: this command requires `self_improvement = true` in .forge.toml.", "error");
+		return null;
+	}
+	return config;
+}
+
+// --- /forge thinking-report (v2, requires self_improvement) ---
+
+async function cmdThinkingReport(ctx: ExtensionCommandContext): Promise<void> {
+	if (requireSelfImprovement(ctx) === null) return;
+
+	const branch = ctx.sessionManager.getBranch();
+	const entries = extractTelemetryEntries(branch as never);
+	const report = analyzeTelemetry(entries);
+	const text = formatTelemetryReport(report);
+
+	if (ctx.hasUI) {
+		ctx.ui.notify(text, "info");
+	}
+}
+
+// --- /forge retrospect [--milestone N] (v2, requires self_improvement) ---
+
+async function cmdRetrospect(
+	args: string[], pi: ExtensionAPI, ctx: ExtensionCommandContext,
+): Promise<void> {
+	const config = requireSelfImprovement(ctx);
+	if (config === null) return;
+
+	const client = requireClient(ctx);
+	if (client === null) return;
+
+	const milestoneNum = extractMilestoneFlag(args);
+	const branch = ctx.sessionManager.getBranch();
+	const telemetryEntries = extractTelemetryEntries(branch as never);
+
+	const input: Parameters<typeof generateRetrospect>[2] = {
+		sessionBranch: branch as never,
+		telemetryEntries,
+	};
+	if (milestoneNum !== undefined) {
+		input.milestoneNumber = milestoneNum;
+	}
+	const report = await generateRetrospect(client, config, input);
+
+	const reportText = formatRetrospectReport(report);
+
+	if (ctx.hasUI) {
+		ctx.ui.notify(reportText, "info");
+	}
+
+	pi.sendMessage(
+		{ content: [{ type: "text", text: reportText }] },
+		{ triggerTurn: false, deliverAs: "nextTurn" },
+	);
+}
+
+/** Extract --milestone N from args. */
+function extractMilestoneFlag(args: string[]): number | undefined {
+	const idx = args.indexOf("--milestone");
+	if (idx !== -1 && idx + 1 < args.length) {
+		const num = Number(args[idx + 1]);
+		if (!Number.isNaN(num)) return num;
+	}
+	return undefined;
+}
+
+/** Format a retrospect report for display. */
+function formatRetrospectReport(report: { summary: string; findings: string[]; recommendations: string[] }): string {
+	const lines: string[] = ["=== Forge Retrospective ===", ""];
+	lines.push(report.summary);
+	lines.push("");
+	if (report.findings.length > 0) {
+		lines.push("Findings:");
+		for (const f of report.findings) {
+			lines.push(`  • ${f}`);
+		}
+		lines.push("");
+	}
+	if (report.recommendations.length > 0) {
+		lines.push("Recommendations:");
+		for (const r of report.recommendations) {
+			lines.push(`  → ${r}`);
+		}
+	}
+	return lines.join("\n");
 }

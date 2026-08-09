@@ -110,4 +110,70 @@ gate = []  # no gate yet
 		const config = parseForgeToml(toml) as SingleProjectConfig;
 		expect(config.repo).toBe("mjaric/smith");
 	});
+
+	it("parses self_improvement = true", () => {
+		const toml = `
+repo = "mjaric/smith"
+project_id = "PVT_1"
+status_field_id = "F1"
+status_options = { backlog = "a", ready = "b", in_progress = "c", in_review = "d", done = "e" }
+gate = []
+self_improvement = true
+`;
+		const config = parseForgeToml(toml) as SingleProjectConfig;
+		expect(config.selfImprovement).toBe(true);
+	});
+
+	it("parses self_improvement = false (explicit)", () => {
+		const toml = `
+repo = "mjaric/smith"
+project_id = "PVT_1"
+status_field_id = "F1"
+status_options = { backlog = "a", ready = "b", in_progress = "c", in_review = "d", done = "e" }
+gate = []
+self_improvement = false
+`;
+		const config = parseForgeToml(toml) as SingleProjectConfig;
+		expect(config.selfImprovement).toBe(false);
+	});
+
+	it("defaults selfImprovement to undefined when not set", () => {
+		const toml = `
+repo = "mjaric/smith"
+project_id = "PVT_1"
+status_field_id = "F1"
+status_options = { backlog = "a", ready = "b", in_progress = "c", in_review = "d", done = "e" }
+gate = []
+`;
+		const config = parseForgeToml(toml) as SingleProjectConfig;
+		expect(config.selfImprovement).toBeUndefined();
+	});
+
+	it("round-trips self_improvement = true", () => {
+		const original: SingleProjectConfig = {
+			repo: "mjaric/smith",
+			projectId: "PVT_1",
+			statusFieldId: "F1",
+			statusOptions: {
+				backlog: "a", ready: "b", inProgress: "c", inReview: "d", done: "e",
+			},
+			gate: [],
+			selfImprovement: true,
+		};
+		const serialized = serializeForgeToml(original);
+		const reparsed = parseForgeToml(serialized);
+		expect(reparsed).toEqual(original);
+	});
+
+	it("throws on invalid self_improvement value", () => {
+		const toml = `
+repo = "mjaric/smith"
+project_id = "PVT_1"
+status_field_id = "F1"
+status_options = { backlog = "a", ready = "b", in_progress = "c", in_review = "d", done = "e" }
+gate = []
+self_improvement = "yes"
+`;
+		expect(() => parseForgeToml(toml)).toThrow("boolean");
+	});
 });

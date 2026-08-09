@@ -1,0 +1,20 @@
+{
+  "name": "forge",
+  "version": "0.0.1",
+  "description": "Spec-driven SDLC loop — decompose, dispatch, review, and sync a GitHub Projects v2 board from spec to done",
+  "type": "module",
+  "omp": {
+    "extensions": ["src/index.ts"]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@octokit/graphql": "=9.0.3",
+    "@octokit/rest": "=22.0.1"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "17.2.8"
+  }
+}

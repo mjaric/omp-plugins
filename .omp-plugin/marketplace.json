@@ -36,6 +36,13 @@
       "source": "./session-memory",
       "category": "development",
       "version": "0.0.1"
+    },
+    {
+      "name": "forge",
+      "description": "Spec-driven SDLC loop — decompose, dispatch, review, and sync a GitHub Projects v2 board from spec to done",
+      "source": "./forge",
+      "category": "development",
+      "version": "0.0.1"
     }
   ]
 }

@@ -1,0 +1,10 @@
+{
+  "overrides": [
+    {
+      "files": ["src/commands/forge-command.ts"],
+      "rules": {
+        "no-await-in-loop": "off"
+      }
+    }
+  ]
+}

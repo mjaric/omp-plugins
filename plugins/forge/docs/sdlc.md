@@ -33,38 +33,51 @@ be bypassed by a persuasive prompt.
 ## 3. End-to-end lifecycle
 
 ```mermaid
-flowchart TB
-  subgraph human [Human — product owner]
-    SPEC[Write spec slice]
-    DECIDE[Answer needs-decision]
-    MERGE[Merge PR — the gate]
-    APPROVE[Approve retrospective diffs]
-  end
+flowchart TD
+    
+    %% Define colors by roles
+    classDef human fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;
+    classDef core fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,color:#374151;
+    classDef agent fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#166534;
 
-  subgraph agents [LLM agents — judgment work]
-    DECOMP[Decomposer: spec to issues + acceptance]
-    ORCH[Orchestrator: sdlc loop]
-    WORK[Workers x4 max: TDD implementation]
-    REV[Reviewer: diff vs contract]
-    RETRO[Retrospective agent: proposals]
-  end
+    subgraph Phase1 [1. Planning and preparation]
+        SPEC["🧓 Write spec slice"] ::: human
+        DECOMP["🤖 Decomposer: spec to issues"] ::: agent
+        BOARD["⚙️ Board state"] ::: core
+        SPEC --> DECOMP --> BOARD
+    end
 
-  subgraph core [Forge core — deterministic, zero LLM]
-    BOARD[Board state]
-    PROMO[Promotion rules]
-    BLOCK[Blocker checks]
-    CI[CI status]
-  end
+    subgraph Phase2 [2. Orchestration and checks]
+        PROMO["⚙️ Promotion rules"] ::: core
+        ORCH["🤖 Orchestrator: sdlc loop"] ::: agent
+        BLOCK["⚙️ Blocker checks"] ::: core
+        DECIDE["🧓 Answer needs-decision"] ::: human
+        BOARD --> PROMO --> ORCH
+        ORCH -->|forge_dispatch| BLOCK
+        DECIDE -->|forge decide| BLOCK
+    end
 
-  SPEC --> DECOMP --> BOARD
-  BOARD --> PROMO --> ORCH
-  ORCH -->|forge_dispatch| BLOCK
-  BLOCK --> WORK --> REV
-  CI --> REV
-  REV -->|clean| MERGE
-  MERGE -->|forge_sync| BOARD
-  DECIDE -->|forge decide| BLOCK
-  MERGE --> RETRO --> APPROVE -->|rules, references, agents| ORCH
+    subgraph Phase3 [3. Implementation and review]
+        WORK["🤖 Workers x4 max: TDD implementation"] ::: agent
+        CI["⚙️ CI status"] ::: core
+        REV["🤖 Reviewer: diff vs contract"] ::: agent
+        BLOCK --> WORK
+        WORK --> REV
+        CI --> REV
+    end
+
+    subgraph Phase4 [4. Merging and synchronization]
+        MERGE["🧓 Merge PR — the gate"] ::: human
+        REV -->|clean| MERGE
+        MERGE -->|forge_sync| BOARD
+    end
+
+    subgraph Phase5 [5. Retrospective and improvement]
+        RETRO["🤖 Retrospective agent: proposals"] ::: agent
+        APPROVE["🧓 Approve retrospective diffs"] ::: human
+        MERGE --> RETRO --> APPROVE
+        APPROVE -->|rules, references, agents| ORCH
+    end
 ```
 
 ## 4. Issue lifecycle on the board

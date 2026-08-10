@@ -35,46 +35,43 @@ be bypassed by a persuasive prompt.
 ```mermaid
 flowchart TD
     
-    %% Define colors by roles
-    classDef human fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;
-    classDef core fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,color:#374151;
-    classDef agent fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#166534;
+
 
     subgraph Phase1 [1. Planning and preparation]
-        SPEC["🧓 Write spec slice"] ::: human
-        DECOMP["🤖 Decomposer: spec to issues"] ::: agent
-        BOARD["⚙️ Board state"] ::: core
+        SPEC["🧓 Write spec slice"] 
+        DECOMP["🤖 Decomposer: spec to issues"]
+        BOARD["⚙️ Board state"] 
         SPEC --> DECOMP --> BOARD
     end
 
     subgraph Phase2 [2. Orchestration and checks]
-        PROMO["⚙️ Promotion rules"] ::: core
-        ORCH["🤖 Orchestrator: sdlc loop"] ::: agent
-        BLOCK["⚙️ Blocker checks"] ::: core
-        DECIDE["🧓 Answer needs-decision"] ::: human
+        PROMO["⚙️ Promotion rules"] 
+        ORCH["🤖 Orchestrator: sdlc loop"] 
+        BLOCK["⚙️ Blocker checks"] 
+        DECIDE["🧓 Answer needs-decision"]
         BOARD --> PROMO --> ORCH
         ORCH -->|forge_dispatch| BLOCK
         DECIDE -->|forge decide| BLOCK
     end
 
     subgraph Phase3 [3. Implementation and review]
-        WORK["🤖 Workers x4 max: TDD implementation"] ::: agent
-        CI["⚙️ CI status"] ::: core
-        REV["🤖 Reviewer: diff vs contract"] ::: agent
+        WORK["🤖 Workers x4 max: TDD implementation"] 
+        CI["⚙️ CI status"] 
+        REV["🤖 Reviewer: diff vs contract"]
         BLOCK --> WORK
         WORK --> REV
         CI --> REV
     end
 
     subgraph Phase4 [4. Merging and synchronization]
-        MERGE["🧓 Merge PR — the gate"] ::: human
+        MERGE["🧓 Merge PR — the gate"] 
         REV -->|clean| MERGE
         MERGE -->|forge_sync| BOARD
     end
 
     subgraph Phase5 [5. Retrospective and improvement]
-        RETRO["🤖 Retrospective agent: proposals"] ::: agent
-        APPROVE["🧓 Approve retrospective diffs"] ::: human
+        RETRO["🤖 Retrospective agent: proposals"]
+        APPROVE["🧓 Approve retrospective diffs"] 
         MERGE --> RETRO --> APPROVE
         APPROVE -->|rules, references, agents| ORCH
     end

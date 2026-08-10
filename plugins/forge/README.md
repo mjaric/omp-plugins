@@ -5,6 +5,8 @@ pipeline: decompose spec slices into GitHub issues, dispatch TDD workers, review
 Projects v2 board, and promote issues as blockers clear.
 
 **Human-gated at the merge boundary**: forge dispatches, implements, and reviews; you merge.
+For the organizational model — roles, authority, and control gates — see
+[docs/sdlc.md](docs/sdlc.md).
 
 ## How it works
 

@@ -1,14 +1,14 @@
-# Korisnički vodič: `file-graph` i `session-memory`
+# Korisnički vodič: `file-graph`, `session-memory` i `forge`
 
-Praktični vodič za dva omp plugina za pretragu i memoriju. Ovaj dokument je
-namenjen **korisnicima** — kako se plugini instaliraju, podešavaju i koriste
-u svakodnevnom radu. Za arhitekturu i dizajn pogledajte
-`docs/specs/` u ovom repozitorijumu.
+Praktični vodič za tri omp plugina. Ovaj dokument je namenjen **korisnicima** —
+kako se plugini instaliraju, podešavaju i koriste u svakodnevnom radu. Za
+arhitekturu i dizajn pogledajte `docs/specs/` u ovom repozitorijumu.
 
 | Plugin | Jedna rečenica |
 |---|---|
 | **file-graph** | Indeksira markdown radni prostor kao graf znanja: outline-i, entiteti, tipizovane veze između fajlova + interaktivno ubacivanje referenci u kontekst |
 | **session-memory** | Indeksira sve što je rečeno u tekućoj sesiji i na sledeći prompt ubacuje samo ono što **nije već u kontekstu**, ne kvareći prompt-cache |
+| **forge** | Spec-driven SDLC petlja: spec isečci → GitHub issue-i → TDD worker-i → review → merge; Projects v2 board je jedini izvor istine o statusu |
 
 ---
 
@@ -21,8 +21,9 @@ u svakodnevnom radu. Za arhitekturu i dizajn pogledajte
 5. [Brzi start (10 minuta)](#5-brzi-start-10-minuta)
 6. [file-graph — detaljno](#6-file-graph--detaljno)
 7. [session-memory — detaljno](#7-session-memory--detaljno)
-8. [Gde se čuvaju podaci](#8-gde-se-čuvaju-podaci)
-9. [Rešavanje problema](#9-rešavanje-problema)
+8. [forge — detaljno](#8-forge--detaljno)
+9. [Gde se čuvaju podaci](#9-gde-se-čuvaju-podaci)
+10. [Rešavanje problema](#10-rešavanje-problema)
 
 ---
 
@@ -31,7 +32,7 @@ u svakodnevnom radu. Za arhitekturu i dizajn pogledajte
 ### Use cases za `file-graph`
 
 - **Istraživačke beleške i registri.** Radite u markdown workspace-u sa
-  claims/registarskim strukturom (`claims.md`, `spikes.md`, `decisions.md`…)
+  claims/registarskim strukturama (`claims.md`, `spikes.md`, `decisions.md`…)
   i želite da agent zna šta gde piše, bez čitanja svih fajlova.
 - **Navigacija velikim workspace-om.** „Gde je definisano C13?" →
   `fg_relations` ili `fg_search` odgovara outline-om, entitetima i vezama.
@@ -47,7 +48,7 @@ u svakodnevnom radu. Za arhitekturu i dizajn pogledajte
 - **Duge sesije posle kompaktovanja.** Kad omp sažme istoriju, detalji se
   gube iz konteksta. Plugin ih vraća — samo one koji nedostaju — čim ih
   novi prompt zatraži.
-- **Povrat na granu sesije.** Indeks prati branch; prebacivanje grane ili
+- **Povratak na granu sesije.** Indeks prati branch; prebacivanje grane ili
   sesije ponovo učitava šta je već ubacivano (ledger), pa nema dupliranja.
 - **Merenje prompt-cache ponašanja.** Telemetrija po svakom turn-u
   (`/smem stats`) pokazuje cache-hit ratio, koliko je bajtova ubačeno i
@@ -55,11 +56,28 @@ u svakodnevnom radu. Za arhitekturu i dizajn pogledajte
 - **A/B poređenje režima.** Režim `naive` postoji isključivo kao baseline da
   se izmeri koliko `prefix-safe` režim čuva cache u odnosu na obično ubacivanje.
 
+### Use cases za `forge`
+
+- **Spec-driven implementacija većih projekata.** Spec je isečen na slice-ove
+  (REQ-*/INV-* ID-jevi); forge pretvara slice u GitHub issue-e i tera petlju
+  dok milestone ne bude gotov.
+- **Board kao izvor istine.** Projects v2 board sa Status poljem; forge
+  sinhronizuje kartice mehanički (zero LLM tokena za board operacije), a
+  čovek samo merge-uje PR-ove.
+- **Paralelni TDD worker-i.** Do 4 worker-a istovremeno u izolovanim
+  worktree-ovima; svaki dobija prompt sklopljen iz issue-ja (Scope + Spec
+  references + Acceptance + gate komande).
+- **Kontrolisane odluke.** Ambiguitet koji spec ne rešava postaje
+  `needs-decision` issue i petlja **staje** dok čovek ne odluči
+  (`/forge decide`). Nikad se ne nagađa.
+
 ### Kada ih kombinovati
 
 Plugini su nezavisni, ali se dopunjuju: `file-graph` daje **trajno znanje
 workspace-a** (fajlovi, veze), `session-memory` daje **sećanje na tekuću
 sesiju** (šta je već rečeno). Oba čuvaju prompt-cache prefix netaknutim.
+`forge` je ortogonalan — ne deli indekse ni memoriju sa druga dva i može da
+radi uz njih u istoj sesiji (npr. istraživački repo sa spec-om u markdown-u).
 
 ---
 
@@ -90,6 +108,20 @@ sesiju** (šta je već rečeno). Oba čuvaju prompt-cache prefix netaknutim.
 | `/smem config <key> <json>` | session-memory | Postavljanje jednog ključa (vidi §7.4) |
 | `/smem rebuild` | session-memory | Ponovno embedovanje svih chunk-ova (posle promene modela) |
 | `/smem clear` | session-memory | Brisanje svih chunk-ova iz indeksa |
+| `/forge setup` | forge | Interaktivno otkriva board, piše `.forge.toml`, instalira sdlc + retrospect skill-ove |
+| `/forge guide` | forge | Kratak korisnički vodič: redosled petlje, pravila board-a, čitanje plana, troubleshooting |
+| `/forge board [filter]` | forge | Tabela board-a grupisana po Status-u (filteri: `backlog`, `ready`, `in_progress`, `in_review`, `done`, `slice-N`) |
+| `/forge plan` | forge | Plan runde bez mutacija: dispatchable / promotable / blocked / not ready / reviewable / milestone-i |
+| `/forge promote` | forge | Premesta eligible Backlog issue-e u Ready |
+| `/forge dispatch <N>` | forge | Verifikacija blockera, kartica → In progress, ispisuje worker prompt |
+| `/forge review <N>` | forge | LLM review prompt protiv acceptance kriterijuma issue-ja |
+| `/forge round` | forge | Sinhronizacija board-a: promote odblokiranih, merged PR-ovi → Done |
+| `/forge decompose <slice>` | forge | LLM: spec isečak → GitHub issue-i sa acceptance kriterijumima |
+| `/forge decide <N> <tekst>` | forge | Beleži odluku, zatvara issue, javlja šta se odblokiralo |
+| `/forge status` | forge | Jedna linija po konfigurisanom projektu |
+| `/forge doctor` | forge | Dijagnostika okruženja + board sinhronizacije; nudi ispravke zastarelih ID-jeva |
+| `/forge thinking-report` | forge | Telemetrija misljenja po turn-u (opt-in, `self_improvement`) |
+| `/forge retrospect [--milestone N]` | forge | Retrospektiva milestone-a: nalazi + preporuke (opt-in, `self_improvement`) |
 
 ### Alatke (dostupne agentu)
 
@@ -104,6 +136,10 @@ sesiju** (šta je već rečeno). Oba čuvaju prompt-cache prefix netaknutim.
 | `smem_recall` | session-memory | `query` | Eksplicitno prisećanje: vraća chunk-ove koji **nisu** već u kontekstu |
 | `smem_stats` | session-memory | — | Indeks + telemetrijski agregati |
 | `smem_status` | session-memory | — | Zdravlje endpoint lanca, veličina indeksa, aktivni režim |
+| `forge_plan` | forge | — | Plan runde (read-only): dispatchable / promotable / blocked / reviewable / milestone-i |
+| `forge_sync` | forge | — | Promote eligible Backlog → Ready; merged In review → Done |
+| `forge_dispatch` | forge | `issue` | Verifikacija blockera, kartica → In progress, vraća worker prompt |
+| `forge_review` | forge | `number` | Acceptance ugovor (review contract) za issue/PR |
 
 ---
 
@@ -115,6 +151,9 @@ sesiju** (šta je već rečeno). Oba čuvaju prompt-cache prefix netaknutim.
   (npr. lokalni ollama) — bez endpoint-a indeksiranje ne radi (vidi §7.3)
 - Za `file-graph`: markdown workspace. Endpoint nije potreban (pretraga je
   lokalna; rerank je opcion i podrazumevano isključen)
+- Za `forge`: `gh` CLI prijavljen (ili `GH_TOKEN` env var) i GitHub Projects
+  v2 board sa Status single-select poljem; gate komande iz `.forge.toml`
+  (npr. `cargo test`, `bunx vitest`) dostupne na PATH-u
 
 ---
 
@@ -129,6 +168,7 @@ omp plugin marketplace add git@github.com:mjaric/omp-plugins.git
 # Instalirajte plugin(e)
 omp plugin install file-graph@mjaric-omp-plugins
 omp plugin install session-memory@mjaric-omp-plugins
+omp plugin install forge@mjaric-omp-plugins
 ```
 
 ### Lokalni razvoj (link)
@@ -140,6 +180,7 @@ bun install
 
 omp plugin link ./plugins/file-graph
 omp plugin link ./plugins/session-memory
+omp plugin link ./plugins/forge
 ```
 
 ### Provera
@@ -186,6 +227,23 @@ ako nešto ne može da se inicijalizuje, sesija nastavlja normalno da radi.
 4. Posle kompaktovanja ili duže sesije, postavite pitanje koje dotiče raniji
    rad: plugin tiho ubacuje samo chunk-ove kojih nema u kontekstu.
 5. `/smem stats` — cache-hit ratio, ubačeni/preskočeni chunk-ovi.
+
+### forge
+
+1. `gh auth login` (ili `GH_TOKEN`). Na GitHub-u napravite Projects v2 board
+   sa Status single-select poljem (Backlog / Ready / In progress / In review /
+   Done).
+2. U repo-u sa spec-om: `/forge setup` — otkriva board, piše `.forge.toml`,
+   instalira `sdlc` i `forge-retrospect` skill-ove u `.omp/skills/`.
+3. `/forge decompose 1` — LLM pretvara prvi slice spec-a u Backlog issue-e sa
+   napisanim acceptance kriterijumima.
+4. `/forge promote` — issue-i bez otvorenih blockera i sa napisanom Acceptance
+   sekcijom prelaze u Ready.
+5. Recite agentu *„pokreni petlju"* — `sdlc` skill čita `forge_plan`, dispatch-uje
+   do 4 TDD worker-a (izolovani worktree-ovi), review-uje PR-ove i sinhronizuje
+   board. **Vi merge-ujete svaki PR** — to je jedina ručna granica.
+6. Stanje u svakom trenutku: `/forge plan` ili `/forge board`; problemi:
+   `/forge doctor`.
 
 ---
 
@@ -321,7 +379,7 @@ dijalozi su isključeni, `alt+g` samo obaveštava. Agent tada koristi
   deduplikaciju po hash-u teksta po sesiji. Posle kompaktovanja, chunk-ovi
   obuhvaćeni sažimanjem dobijaju oznaku „recall-first" (bonus pri rangiranju).
 - **Čitanje:** na novi prompt embeduje se upit, bira top-k po kosinusnoj
-  sličnosti, pa sledi dvozbojna deduplikacija — trajni ledger već ubačenih
+  sličnosti, pa sledi dvostruka deduplikacija — trajni ledger već ubačenih
   chunk-ova + poređenje sadržaja sa trenutnim kontekstom.
 - **Ubacivanje:** u kontekst se dodaje **tačno jedna** poruka na kraj, i to
   samo ako paket nije prazan:
@@ -408,9 +466,103 @@ ubačenih i preskočenih (dedup) chunk-ova i prosečnog vremena prisećanja.
 
 ---
 
-## 8. Gde se čuvaju podaci
+## 8. forge — detaljno
 
-Ništa se ne upisuje u indeksirani workspace — svi podaci žive van projekta:
+### 8.1 Kako petlja radi
+
+```
+spec  ──decompose──▶  issue-i (milestone = slice)
+                        ▼
+             board (Projects v2, Status polje)
+                        │ dispatch (verifikovano odblokirano)
+                        ▼
+          worker (izolovan worktree, TDD)
+                        │ draft PR "Fixes #N"
+                        ▼
+             CI ──▶ review ──▶ VI merge-ujete ──▶ Done
+```
+
+Mehaničke operacije (board, blockeri, CI, sinhronizacija) rade u TypeScript-u
+bez LLM tokena; LLM se poziva samo za `decompose` (spec → issue-i), pisanje
+koda (worker) i `review` (analiza diff-a). **Granica je human-gated: forge
+nikad ne merge-uje i ne push-uje.** Organizacioni model (uloge, ovlašćenja,
+gate-ovi) opisan je u `plugins/forge/docs/sdlc.md`.
+
+Redosled jedne runde: `forge_sync` (promote + merged → Done) → `forge_plan`
+→ dispatch do 4 worker-a → review → ponovi. Zaustavljanje: milestone gotov,
+board idle, `needs-decision` issue, ili vi kažete stop. Autopilot: recite
+agentu „pokreni petlju" — `sdlc` skill (instaliran u `.omp/skills/`) vozi
+ceo protokol; projektne korekcije idu u `.omp/skills/sdlc/rules/`.
+
+### 8.2 Board i pravila (šta forge proverava)
+
+- **Blockeri** — native GitHub „blocked by" relacije (sidebar na issue-u)
+  **plus** `Blocked by #N` redovi u telu issue-ja. Issue je blokiran dok je
+  bilo koji blocker otvoren.
+- **Promocija (Backlog → Ready)** — nema otvorenih blockera **i** Acceptance
+  sekcija je **napisana** (svaki bullet ima tekst, npr. test ime po REQ-*).
+  Checkbox-ovi su worker-ov TDD checklist: pišu se kao `- [ ]` na decompose-u
+  i ostaju nečekirani do implementacije — nečekiran box **ne sprečava**
+  promociju.
+- **Dispatch (Ready → In progress)** — samo bez otvorenih blockera; worker
+  prompt se sklapa iz issue-ja (Scope + Spec references + Acceptance + gate
+  iz `.forge.toml`).
+- **needs-decision** — issue sa `needs-decision` u naslovu zaustavlja petlju;
+  odluku beleži čovek kroz `/forge decide <N> <tekst>` (zatvara issue i
+  javlja šta se odblokiralo).
+
+### 8.3 Čitanje `/forge plan`
+
+| Sekcija plana | Značenje | Akcija |
+|---|---|---|
+| Dispatchable | Ready + odblokirano | worker-i mogu odmah da krenu |
+| Promotable | Backlog + odblokirano + napisana Acceptance | `/forge promote` ili `round` |
+| Blocked | otvoreni blockeri, navedeni po issue-u | sačekati ili `/forge decide` |
+| Not ready | Backlog bez napisane Acceptance sekcije | dopunite telo issue-ja |
+| Reviewable | In review sa linkovanim PR-om | `/forge review <N>` |
+
+### 8.4 Konfiguracija (`.forge.toml`)
+
+Generiše je `/forge setup`; živi u root-u repo-a i **jedini je fajl koji
+forge upisuje u vaš projekat** (uz skill template-ove u `.omp/skills/`).
+
+```toml
+repo = "owner/name"                 # iz git remote origin
+project_id = "PVT_..."              # Projects v2 board
+status_field_id = "PVTSSF_..."
+status_options = { backlog = "...", ready = "...", in_progress = "...", in_review = "...", done = "..." }
+gate = ["cargo test", "cargo clippy --all-targets -- -D warnings"]
+spec_id_prefix = "REQ"
+```
+
+**Multi-project (git submodules):** `[workspace] type = "submodules"` + niz
+`[[projects]]` sa istim poljima po projektu. Projekat se rešava automatski iz
+git remote origin direktorijuma u kojem ste — bez ručnih flag-ova;
+`/forge status` pokriva sve projekte.
+
+**Self-improvement (opt-in):** `self_improvement = true` uključuje telemetriju
+po turn-u (`/forge thinking-report`) i retrospektive (`/forge retrospect`);
+isključeno po default-u.
+
+### 8.5 Auth
+
+Redosled resolucije GitHub tokena: `~/.config/gh/hosts.yml` → `gh auth token`
+(Keychain na macOS) → `GH_TOKEN` → `GITHUB_TOKEN`. Bez tokena forge je inert
+i komande javljaju grešku — sesija nastavlja da radi.
+
+### 8.6 Doctor
+
+Posle seljenja na drugu mašinu ili promene board-a: `/forge doctor` proverava
+`.forge.toml`, auth, gate binarije na PATH-u, dostupnost board-a i svežinu
+status field/option ID-jeva; za zastarele ID-jeve nudi prepisivanje
+`.forge.toml` (jedna potvrda po ispravci).
+
+---
+
+## 9. Gde se čuvaju podaci
+
+`file-graph` i `session-memory` ne upisuju ništa u indeksirani workspace —
+svi podaci žive van projekta:
 
 | Sadržaj | Putanja |
 |---|---|
@@ -421,9 +573,17 @@ Ništa se ne upisuje u indeksirani workspace — svi podaci žive van projekta:
 `<basename>-<hash>` je stabilni SHA-256 (prvih 12 hex) apsolutne putanje
 workspace-a. Isti workspace = ista baza, nezavisno od sesije.
 
+`forge` nema lokalnu bazu — stanje živi na GitHub-u (board, issue-i, PR-ovi).
+U projektu ostavlja samo:
+
+| Sadržaj | Putanja |
+|---|---|
+| forge konfiguracija | `<repo>/.forge.toml` |
+| forge skill-ovi | `<repo>/.omp/skills/{sdlc,forge-retrospect}/` (posle instalacije ih poseduje projekt) |
+
 ---
 
-## 9. Rešavanje problema
+## 10. Rešavanje problema
 
 | Simptom | Uzrok i rešenje |
 |---|---|
@@ -436,9 +596,15 @@ workspace-a. Isti workspace = ista baza, nezavisno od sesije.
 | Indeks raste ali nema prisećanja | Režim je `off` (`/smem config mode '"prefix-safe"'`) ili chunk-ovi još nisu embedovani (`X embedded` u stats — pokrenite `/smem rebuild`) |
 | Posle promene embedding modela rezultati čudni | Stari i novi vektori nisu mešani (različiti modeli), ali starim chunk-ovima treba novi embedding → `/smem rebuild` |
 | Store „nije inicijalizovan" | Plugin je best-effort: restartujte sesiju; alatke u međuvremenu vraćaju eksplicitnu grešku umesto da ruše sesiju |
+| `/forge`: `.forge.toml not found` | Setup nije rađen u ovom repo-u — `/forge setup` |
+| `/forge`: auth greška | `gh auth login` ili `GH_TOKEN`; `/forge doctor` proverava auth |
+| Issue ostaje u Backlog-u | Ili ima otvoren „blocked by" (sidebar ili `Blocked by #N` u telu), ili Acceptance sekcija nije napisana — nečekirani checkbox-ovi nisu prepreka |
+| Issue u planu pod „Not ready" | Acceptance sekcija fali ili ima prazne bullet-e — dopunite telo issue-ja na decompose-u |
+| Board ID-jevi zastareli (promenjen board) | `/forge doctor` nudi prepisivanje `.forge.toml` svežim ID-jevima |
+| Plan prikazuje `needs-decision` | Petlja staje namerno — odluku donosi čovek: `/forge decide <N> <tekst>` |
 
 ---
 
-*Verzija: 0.0.1 (oba plugina) · Za promene ponašanja pogledajte specove u
-`docs/specs/`; sva ponašanja opisana ovde su pokrivena testovima
-(`bun test`, 148 testova).*
+*Verzije: file-graph 0.0.1 · session-memory 0.0.1 · forge 0.0.1 · Za promene
+ponašanja pogledajte specove u `docs/specs/`; sva ponašanja opisana ovde su
+pokrivena testovima (`bun test`, 315 testova).*

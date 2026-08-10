@@ -11,8 +11,9 @@ multiple plugins published through a single private marketplace catalog.
 | [remote-memory](plugins/remote-memory/) | 0.0.1 | Remote, portable agent memory — recall, retain, reflect, share _(skeleton)_ |
 | [file-graph](plugins/file-graph/) | 0.0.1 | Workspace knowledge-graph indexer for markdown — outlines, entities, typed cross-file relations |
 | [session-memory](plugins/session-memory/) | 0.0.1 | Live session index with prefix-safe recall — inject only what's not already in context |
+| [forge](plugins/forge/) | 0.0.1 | Spec-driven SDLC loop — decompose, dispatch, review, and sync a GitHub Projects v2 board |
 
-User manual for `file-graph` and `session-memory` (Serbian):
+User manual for `file-graph`, `session-memory`, and `forge` (Serbian):
 [USER-MANUAL.md](USER-MANUAL.md).
 
 ## Quick start
@@ -26,6 +27,9 @@ omp plugin marketplace add git@github.com:mjaric/omp-plugins.git
 # Install a plugin
 omp plugin install token-rate@mjaric-omp-plugins
 omp plugin install remote-memory@mjaric-omp-plugins
+omp plugin install file-graph@mjaric-omp-plugins
+omp plugin install session-memory@mjaric-omp-plugins
+omp plugin install forge@mjaric-omp-plugins
 ```
 
 ### Local development (link)
@@ -38,6 +42,9 @@ bun install
 # Link individual plugins for live editing
 omp plugin link ./plugins/token-rate
 omp plugin link ./plugins/remote-memory
+omp plugin link ./plugins/file-graph
+omp plugin link ./plugins/session-memory
+omp plugin link ./plugins/forge
 ```
 
 Verify installation:
@@ -55,16 +62,16 @@ omp-plugins/
 │   └── marketplace.json          # marketplace catalog (lists all plugins)
 ├── plugins/
 │   ├── token-rate/               # tokens/sec widget plugin
-│   │   ├── src/
-│   │   │   ├── index.ts          # extension factory
-│   │   │   ├── rate-calculator.ts
-│   │   │   └── rate-calculator.test.ts
-│   │   └── package.json
-│   └── remote-memory/            # remote memory backend plugin (skeleton)
+│   ├── remote-memory/            # remote memory backend plugin (skeleton)
+│   ├── file-graph/               # markdown knowledge-graph indexer
+│   ├── session-memory/           # prefix-safe session recall
+│   └── forge/                    # spec-driven SDLC loop over a Projects v2 board
 │       ├── src/
-│       │   └── index.ts
-│       ├── .mcp.json
-│       └── package.json
+│       │   ├── commands/         # /forge subcommands + guide
+│       │   ├── loop/             # plan/dispatch/round seam (commands + agent tools)
+│       │   ├── github/           # Octokit: board, issues, PRs, auth
+│       │   └── index.ts          # extension factory
+│       └── templates/            # sdlc + retrospect skill templates
 ├── package.json                 # bun workspace root
 ├── tsconfig.json                # shared strict TS config
 └── .oxlintrc.json               # oxlint config

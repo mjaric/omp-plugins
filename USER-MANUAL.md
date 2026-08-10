@@ -237,9 +237,11 @@ ako nešto ne može da se inicijalizuje, sesija nastavlja normalno da radi.
    napisanim acceptance kriterijumima.
 4. `/forge promote` — issue-i bez otvorenih blockera i sa napisanom Acceptance
    sekcijom prelaze u Ready.
-5. Recite agentu *„pokreni petlju"* — `sdlc` skill čita `forge_plan`, dispatch-uje
-   do 4 TDD worker-a (izolovani worktree-ovi), review-uje PR-ove i sinhronizuje
-   board. **Vi merge-ujete svaki PR** — to je jedina ručna granica.
+5. Pokrenite rundu: recite agentu *„pokreni petlju"* (ili `run a round`) — `sdlc`
+   skill odradi jedan krug: `forge_sync` → `forge_plan` → dispatch do 4 TDD
+   worker-a (izolovani worktree-ovi) → review PR-ova → izveštaj. Za kontinuirani
+   rad: `/loop Run one round of the sdlc loop.` — svaki yield ponovo pokreće
+   krug. **Vi merge-ujete svaki PR** — to je jedina ručna granica.
 6. Stanje u svakom trenutku: `/forge plan` ili `/forge board`; problemi:
    `/forge doctor`.
 
@@ -487,11 +489,11 @@ nikad ne merge-uje i ne push-uje.** Organizacioni model (uloge, ovlašćenja,
 gate-ovi) opisan je u `plugins/forge/docs/sdlc.md`.
 
 Redosled jedne runde: `forge_sync` (promote + green-CI In progress → In review +
-merged → Done) → `forge_plan` → dispatch do 4 worker-a → review → ponovi.
-Zaustavljanje: milestone gotov, board idle, `needs-decision` issue, ili vi
-kažete stop. Autopilot: recite agentu „pokreni petlju" — `sdlc` skill
-(instaliran u `.omp/skills/`) vozi ceo protokol; projektne korekcije idu u
-`.omp/skills/sdlc/rules/`.
+merged → Done) → `forge_plan` → dispatch do 4 worker-a → review → izveštaj.
+Skill radi **jednu rundu po aktivaciji** i ne petlja interno — ponavljanje daje
+`/loop` (ili vi ručnim ponavljanjem). Zaustavljanje runde: milestone gotov,
+board idle, `needs-decision` issue. Autopilot: `/loop Run one round of the sdlc
+loop.`; projektne korekcije idu u `.omp/skills/sdlc/rules/`.
 
 ### 8.2 Board i pravila (šta forge proverava)
 

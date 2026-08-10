@@ -19,7 +19,7 @@ merges, and approval of process changes.
 | Actor | Type | Responsibility | May change | Never does |
 |---|---|---|---|---|
 | **Product owner** (human) | Human | Owns the spec; answers `needs-decision` issues; merges PRs; approves process changes | Spec, decisions, `main` (via merge), process rules | Writes code in the loop |
-| **Orchestrator** (`sdlc` skill, lead agent) | LLM agent | Runs the loop: sync → plan → dispatch (≤4 workers) → review → repeat; stops on milestone/idle/decision | Board transitions via forge tools; spawns workers/reviewers | Guesses past a decision; merges; calls `gh` for board logic |
+| **Orchestrator** (`sdlc` skill, lead agent) | LLM agent | Runs one round per activation: sync → plan → dispatch (≤4 workers) → review → report; stops a round on milestone/idle/decision; repetition comes from `/loop` or the user | Board transitions via forge tools; spawns workers/reviewers | Guesses past a decision; merges; calls `gh` for board logic; loops internally |
 | **Decomposer** (`/forge decompose`) | LLM task | Turns a spec slice into GitHub issues with written acceptance criteria (test names) and blockers | Issues + acceptance checklists | Implementation |
 | **Worker** (`task` agent, isolated worktree) | LLM agent | TDD implementation of one issue: failing tests first, gate passes, draft PR `Fixes #N` | Own branch `impl/N-slug` only | Touches `main`; skips the gate; opens non-draft PRs |
 | **Reviewer** (`reviewer` agent) | LLM agent | Checks the diff against the acceptance contract; reports findings by severity | Nothing — read-only | Approves merges |
@@ -123,8 +123,8 @@ sequenceDiagram
   participant F as Forge core (TS)
   participant W as Worker (x4 max)
   participant R as Reviewer
+  H->>O: run a round (or /loop re-submits the prompt)
 
-  H->>O: run the loop
   O->>F: forge_sync (promote eligible backlog)
   O->>F: forge_plan (read state)
   F-->>O: dispatchable / reviewable / blocked / needs-decision

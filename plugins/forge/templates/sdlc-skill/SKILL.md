@@ -1,116 +1,99 @@
 ---
 name: sdlc
-description: Orchestrate the spec-driven SDLC loop — read the forge plan, dispatch TDD workers for Ready issues (max 4 parallel), review PRs, sync the board, and stop at milestone completion. Triggers on "run the loop", "run a round", "start the sdlc loop", or goal-mode implementation runs.
+description: Run ONE round of the spec-driven SDLC loop — sync the board, read the plan, dispatch TDD workers (max 4, isolated worktrees), review PRs, report. Triggers on "run a round", "run one round", "run the sdlc loop", "start the sdlc loop", "pokreni petlju", "jedan krug". Designed to be driven repeatedly by `/loop`; never loops internally.
 ---
 
-# SDLC Loop Orchestration
+# SDLC Round
 
-You orchestrate a GitHub-Projects-driven delivery loop for a spec-driven repo.
-The **forge plugin** does all deterministic GitHub work (board reads/writes,
-blocker checks, CI status). You do the reasoning: deciding what to dispatch,
-reviewing results, and knowing when to stop.
+You run **one round per activation**. Repetition comes from `/loop` (or the
+user re-asking) — never loop inside this skill. One pass, then a terse report
+and yield.
+
+The forge plugin does all deterministic GitHub work (board reads/writes,
+blocker checks, CI status). You do the reasoning: what to dispatch, spawning
+workers and reviewers, routing findings.
 
 ## Tools you use
 
 | Tool | Effect | Mutates? |
 |---|---|---|
-| `forge_plan` | Round plan: dispatchable / reviewable / promotable / blocked / milestones | No |
 | `forge_sync` | Promote unblocked Backlog → Ready; green-CI In progress → In review (undraft PR); merged In review → Done | Yes |
-| `forge_dispatch {issue}` | Verify unblocked, card → In progress, returns worker prompt | Yes |
-| `forge_review {number}` | Returns the review contract for an issue/PR | No |
+| `forge_plan` | Round plan: dispatchable / reviewable / promotable / blocked / needs-decision / milestones | No |
+| `forge_dispatch {issue}` | Verify unblocked, card → In progress, returns the worker prompt | Yes |
+| `forge_review {number}` | Acceptance review contract for an issue/PR | No |
 | `task` | Spawn worker / reviewer subagents (isolated worktrees) | Yes |
+| `hub` | Watch in-flight worker jobs (`wait`); route findings back (`send`) | — |
 
-Never call `gh` directly for board or blocker checks — the forge tools do it
-deterministically and for free. Use `gh`/`read` only for spec or repo content.
+Never call `gh` for board or blocker checks — forge tools do it deterministically
+and for free. Use `gh`/`read` only for spec or repo content.
 
-## The loop protocol
+The user may interleave `/forge …` commands at any point; the board is the
+source of truth, so your next round simply adapts.
 
-```
-START
-  │
-  ├─ forge_sync                    # promote newly eligible issues first
-  │
-  ├─ forge_plan                    # read current state
-  │     │
-  │     ├─ needsDecision non-empty? ── STOP: report the decisions to the user.
-  │     │                                NEVER guess past a needs-decision issue.
-  │     │
-  │     ├─ milestone complete?    ── STOP: report, offer `/forge retrospect`
-  │     │
-  │     ├─ idle (nothing actionable, nothing in flight)?
-  │     │                         ── STOP: nothing left to do. Report state.
-  │     │
-  │     ├─ dispatchable non-empty ── dispatch up to 4 workers (see below)
-  │     │
-  │     ├─ reviewable non-empty   ── run reviews (see below)
-  │     │
-  │     └─ otherwise              ── wait for in-flight workers; when all
-  │                                  settle, forge_sync and loop back to forge_plan
-  │
-  └─ repeat
-```
+## The round (one pass, in order)
 
-Stop conditions (any one ends the loop):
-
-1. **Milestone complete** — `forge_plan` reports the active milestone with
-   `complete: true` (all issues Done). Report completion and offer
-   `/forge retrospect`.
-2. **Nothing actionable** — plan is `idle` and no workers in flight.
-3. **Needs decision** — any `needsDecision` item. Surface it to the user.
-4. **User stops** — the user says stop / interrupts.
-
-## Dispatching workers
-
-For each issue in `dispatchable` (capped at 4, prefer the `dispatchNow` list
-from `forge_plan` details):
-
-1. Call `forge_dispatch {issue: <N>}` — returns the worker prompt.
-2. Spawn a worker with the `task` tool:
-   - `agent: "task"`, `isolated: true` (worktree)
-   - `task`: the worker prompt returned by `forge_dispatch`, verbatim
-3. Dispatch all eligible issues **in one `task` call** (parallel `tasks[]`),
-   never sequentially.
-
-Worker contract is already in the prompt (branch rule, TDD, gate, draft PR
-with `Fixes #N`). Do not add extra instructions unless `rules/` says so.
-
-If `rules/` defines a stack-specific agent name (e.g. `rust-impl`), use that
-agent instead of `task` — but only when it exists; otherwise fall back.
-
-## Reviewing PRs
-
-For each item in `reviewable`:
-
-1. Call `forge_review {number: <issue>}` — returns the acceptance contract.
-2. Spawn the bundled `reviewer` agent via `task`:
-   - `task`: review the change for issue #N against this contract. Fetch the
-     diff via `pr://<PR>/diff/all`. Check every acceptance criterion has a
-     real test, the gate passes, and there are no stubs/placeholders. Report
-     findings by severity.
-3. Clean + CI green → `forge_sync` moves the card to In review and undrafts
-   the PR; leave it for the user to merge (human-gated boundary).
-   Findings → route back to the same worker (via `hub` message or a
-   follow-up task) until clean.
-
-## Project rules
-
-Before the first dispatch of a session, read the project-local rules:
-
-- `.omp/skills/sdlc/rules/*.md` — project-specific corrections (gate
-  overrides, stack agent selection, extra PR conventions). Apply any rule
-  found there; they override the generic protocol above.
-- `.omp/skills/sdlc/references/*.md` — learned context from past rounds and
-  retrospectives. Read when relevant to a decision.
-
-If neither directory has content, the generic protocol stands as-is.
+1. **Sync** — `forge_sync` first, so promotions and In-review moves land
+   before you read state.
+2. **Plan** — `forge_plan`; read every section.
+3. **Stop checks** (report and yield; a human must act):
+   - `needsDecision` non-empty → STOP. List the decisions, instruct
+     `/forge decide N <text>` and pausing `/loop` (Esc). NEVER guess past a
+     needs-decision issue.
+   - Active milestone complete → STOP. Report completion, offer
+     `/forge retrospect`.
+   - Idle (nothing actionable, nothing in flight) → STOP. Report that the
+     board is idle and the loop can be disabled.
+4. **Review** everything `reviewable`:
+   - `forge_review {number}` → contract; spawn the bundled `reviewer` agent
+     via `task`: review the change for issue #N against the contract, diff at
+     `pr://<PR>/diff/all`; check every criterion has a real test, the gate
+     passes, no stubs/placeholders.
+   - Clean → leave for the human merge (card is already In review).
+   - Findings → route back to the same worker: `hub send` when the worker is
+     parked, else a follow-up `task` carrying the findings.
+5. **Dispatch** everything `dispatchable`, capped at 4:
+   - `forge_dispatch {issue}` per issue → worker prompts.
+   - ONE `task` call with parallel `tasks[]`: each `agent: "task"`,
+     `isolated: true`, `task` = the returned prompt verbatim.
+   - Worker contract is already in the prompt (branch rule, TDD, gate, draft
+     PR `Fixes #N`). Add nothing unless `rules/` says so.
+   - If `rules/` names a stack-specific agent (e.g. `rust-impl`) and it
+     exists, use it instead of `task`.
+6. **Settle in-flight work** — if workers are still running and nothing else
+   is actionable, `hub wait` on their jobs so their results land this round;
+   then re-run steps 1–4 once before reporting. If waiting is unavailable,
+   yield — results wake the session and the next round picks them up.
 
 ## Reporting
 
-After each round (and on every stop), give a terse report:
+End every round with a terse report:
 
-- dispatched: issue numbers + worker agents
+- dispatched: issue numbers + worker handles
 - reviewed: PR numbers + verdict (clean / findings)
 - blocked: issue numbers + reason
 - decisions needed: issue numbers
-- milestone progress: done/total per active milestone
-- next recommended action
+- milestone progress: done/total for the active milestone
+- next: what the next round will pick up
+
+## Project rules
+
+Before the first dispatch of a session, read:
+
+- `rules/*.md` — project-specific corrections (gate overrides, stack agent
+  selection, extra PR conventions). They override this protocol.
+- `references/*.md` — learned context from past rounds and retrospectives.
+  Read when relevant to a decision.
+
+If neither has content, this protocol stands as-is.
+
+## Running under /loop
+
+The intended driver:
+
+```
+/loop Run one round of the sdlc loop.
+```
+
+Each yield re-submits the prompt → the next round. The loop can dispatch,
+implement, and review, but it **cannot ship**: merges stay human. Esc cancels
+the current iteration; `/loop` again disables the mode.

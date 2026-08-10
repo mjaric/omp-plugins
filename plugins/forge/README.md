@@ -83,11 +83,12 @@ Both are thin adapters over the same `src/loop` modules; there is one implementa
 
 Setup copies two skill templates into `<repo>/.omp/skills/` — the project owns them afterwards:
 
-- **`sdlc`** — orchestration protocol: `forge_sync` → `forge_plan` → dispatch up to 4 TDD
-  workers via `task` (isolated worktrees) → review PRs via the bundled `reviewer` agent →
-  repeat. Stops at milestone completion, when the board is idle, on `needs-decision` issues,
-  or when you stop it. Project corrections live in `.omp/skills/sdlc/rules/`; learned context
-  in `.omp/skills/sdlc/references/`.
+- **`sdlc`** — one round per activation: `forge_sync` → `forge_plan` → dispatch up
+  to 4 TDD workers via `task` (isolated worktrees) → review PRs via the bundled
+  `reviewer` agent → report and yield. Repetition comes from `/loop` (or the user
+  re-asking); the skill never loops internally. Stops a round at milestone
+  completion, an idle board, or `needs-decision` issues. Project corrections live
+  in `.omp/skills/sdlc/rules/`; learned context in `.omp/skills/sdlc/references/`.
 - **`forge-retrospect`** — milestone self-improvement: reads the `/forge retrospect` analysis
   and proposes improvements as reviewable diffs to sdlc rules/references, helper scripts, and
   new omp agents/roles. Nothing is applied without your approval.

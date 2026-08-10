@@ -18,11 +18,10 @@ THE LOOP (in order)
                merged PRs -> Done)
   promote      move unblocked, acceptance-written issues Backlog -> Ready
   dispatch N   verify blockers, card -> In progress, print the worker prompt
-  round        sync the board (promote unblocked; merged PRs -> Done)
   review N     LLM: review a PR against the issue's acceptance criteria
   retrospect   after a milestone: findings + improvements (opt-in)
-  Autopilot: ask the agent to "run the loop" — the sdlc skill drives
-  plan/dispatch/review/round for you. You still merge every PR.
+  Autopilot    "run a round" / "pokreni petlju" runs one sdlc-skill round;
+               repeat under /loop for continuous rounds
 
 BOARD RULES (what forge checks, zero LLM)
   Blockers   native GitHub "blocked by" relationships + "Blocked by #N" body lines;

@@ -16,6 +16,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { renderBoard, type BoardRenderer } from "./board-render";
+import { getForgeArgumentCompletions } from "./forge-completions";
 import { fetchStatusField, getBoardState, moveCard } from "../github/board";
 import { getGitHubClient, type ForgeGitHubClient } from "../github/client";
 import { loadConfig } from "../config/forge-config-loader";
@@ -62,6 +63,7 @@ const KNOWN_SUBCOMMANDS = new Set([
 export function registerForgeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("forge", {
 		description: "Forge: spec-driven SDLC loop (board, dispatch, review, round, ...)",
+		getArgumentCompletions: getForgeArgumentCompletions,
 		async handler(args, ctx) {
 			const { sub, args: subArgs } = parseArgs(args);
 			if (sub.length === 0 || !KNOWN_SUBCOMMANDS.has(sub)) {

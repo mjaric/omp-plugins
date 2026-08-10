@@ -37,15 +37,12 @@ const SUBCOMMANDS: SubcommandSpec[] = [
 		{ value: "in_review", description: "Only In review items" },
 		{ value: "done", description: "Only Done items" },
 	] },
+	{ name: "plan", description: "Query-only round plan: dispatchable / blocked / reviewable / milestones", hint: "" },
 	{ name: "decompose", description: "Turn a spec slice into GitHub issues", hint: "<slice>" },
-	{ name: "dispatch", description: "Move an unblocked issue to In progress and emit a worker prompt", hint: "<issue>", extras: [
-		{ value: "--project ", description: "Project name (multi-repo .forge.toml)" },
-	] },
+	{ name: "dispatch", description: "Move an unblocked issue to In progress and emit a worker prompt", hint: "<issue>" },
 	{ name: "review", description: "Emit a review prompt for a PR/issue", hint: "<pr-or-issue>" },
 	{ name: "decide", description: "Close an issue with a decision comment", hint: "<issue> <decision text>" },
-	{ name: "round", description: "Dispatch Ready, mark merged Done, promote unblocked backlog", hint: "", extras: [
-		{ value: "--project ", description: "Project name (multi-repo .forge.toml)" },
-	] },
+	{ name: "round", description: "Sync board: promote unblocked backlog, mark merged Done", hint: "" },
 	{ name: "promote", description: "Move eligible backlog items to Ready", hint: "" },
 	{ name: "status", description: "One-line board counts", hint: "" },
 	{ name: "thinking-report", description: "Per-turn thinking-level metrics (self_improvement)", hint: "" },
@@ -53,6 +50,7 @@ const SUBCOMMANDS: SubcommandSpec[] = [
 		{ value: "--milestone ", description: "Limit the retrospective to one milestone" },
 	] },
 	{ name: "doctor", description: "Environment + board sync diagnostics", hint: "" },
+	{ name: "guide", description: "Short user manual: loop order, board rules, troubleshooting", hint: "" },
 ];
 
 function subcommandItems(lowerPrefix: string): AutocompleteItem[] {

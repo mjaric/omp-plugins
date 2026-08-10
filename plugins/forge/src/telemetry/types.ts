@@ -29,6 +29,10 @@ export interface ThinkingTelemetryEntry {
 	turnIndex: number;
 	/** Thinking level at turn end. */
 	thinkingLevel: string | undefined;
+	/** Model id of the turn's assistant message, when available. */
+	model: string | undefined;
+	/** Provider id of the turn's assistant message, when available. */
+	provider: string | undefined;
 	/** Number of tool calls in this turn. */
 	toolCalls: number;
 	/** Number of tool errors in this turn. */
@@ -43,6 +47,8 @@ export interface TelemetryReport {
 	totalTurns: number;
 	/** Distribution of thinking levels used. */
 	thinkingDistribution: Record<string, number>;
+	/** Distribution of model ids used per turn. */
+	modelDistribution: Record<string, number>;
 	/** Total tool calls across all turns. */
 	totalToolCalls: number;
 	/** Total tool errors across all turns. */

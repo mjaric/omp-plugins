@@ -39,10 +39,19 @@ export function buildEntry(
 	event: TurnEndEvent,
 	thinkingLevel: string | undefined,
 ): ThinkingTelemetryEntry {
+	const message = event.message as unknown;
+	let model: string | undefined;
+	let provider: string | undefined;
+	if (typeof message === "object" && message !== null && "role" in message && message.role === "assistant") {
+		if ("model" in message && typeof message.model === "string") model = message.model;
+		if ("provider" in message && typeof message.provider === "string") provider = message.provider;
+	}
 	return {
 		ts: Date.now(),
 		turnIndex: event.turnIndex,
 		thinkingLevel,
+		model,
+		provider,
 		toolCalls: event.toolResults.length,
 		toolErrors: countErrors(event),
 		hadRetry: false,
@@ -86,6 +95,7 @@ export function analyzeTelemetry(
 	entries: ThinkingTelemetryEntry[],
 ): TelemetryReport {
 	const distribution: Record<string, number> = {};
+	const modelDistribution: Record<string, number> = {};
 	let totalToolCalls = 0;
 	let totalToolErrors = 0;
 	let retryTurns = 0;
@@ -93,6 +103,8 @@ export function analyzeTelemetry(
 	for (const entry of entries) {
 		const level = entry.thinkingLevel ?? "unknown";
 		distribution[level] = (distribution[level] ?? 0) + 1;
+		const model = entry.model ?? "unknown";
+		modelDistribution[model] = (modelDistribution[model] ?? 0) + 1;
 		totalToolCalls += entry.toolCalls;
 		totalToolErrors += entry.toolErrors;
 		if (entry.hadRetry) retryTurns++;
@@ -103,6 +115,7 @@ export function analyzeTelemetry(
 	return {
 		totalTurns: entries.length,
 		thinkingDistribution: distribution,
+		modelDistribution,
 		totalToolCalls,
 		totalToolErrors,
 		retryTurns,
@@ -191,6 +204,13 @@ export function formatTelemetryReport(report: TelemetryReport): string {
 	for (const [level, count] of Object.entries(report.thinkingDistribution)) {
 		const pct = Math.round((count / report.totalTurns) * 100);
 		lines.push(`  ${level}: ${count} turns (${pct}%)`);
+	}
+	lines.push("");
+
+	lines.push("Model distribution:");
+	for (const [model, count] of Object.entries(report.modelDistribution)) {
+		const pct = Math.round((count / report.totalTurns) * 100);
+		lines.push(`  ${model}: ${count} turns (${pct}%)`);
 	}
 	lines.push("");
 

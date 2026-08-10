@@ -31,13 +31,92 @@ export function parseBodyBlockers(body: string): number[] {
 	return numbers;
 }
 
-/** Get blockers for an issue, checking which are still open. */
+interface NativeBlockerNode {
+	number: number;
+	state: string;
+}
+
+interface NativeBlockerResponse {
+	repository?: { issue?: { blockedBy?: { nodes?: NativeBlockerNode[] } } };
+}
+
+/** GraphQL query for native GitHub blocked-by relationships. */
+const BLOCKED_BY_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+	repository(owner: $owner, name: $name) {
+		issue(number: $number) {
+			blockedBy(first: 50) { nodes { number state } }
+		}
+	}
+}`;
+
+/** Native blocked-by relationship numbers (sidebar links). Empty when unsupported. */
+async function getNativeBlockerNumbers(
+	client: ForgeGitHubClient,
+	repo: string,
+	issueNumber: number,
+): Promise<number[]> {
+	const [owner, repoName] = repo.split("/");
+	try {
+		const data = await client.graphql<NativeBlockerResponse>(BLOCKED_BY_QUERY, {
+			owner: owner ?? "",
+			name: repoName ?? "",
+			number: issueNumber,
+		});
+		return (data.repository?.issue?.blockedBy?.nodes ?? []).map((n) => n.number);
+	} catch {
+		// Native relationships unsupported or unreachable — body text stays authoritative.
+		return [];
+	}
+}
+
+/** Check which candidate blockers are still open (unfetchable = open). */
+async function resolveOpenBlockers(
+	client: ForgeGitHubClient,
+	repo: string,
+	candidates: number[],
+): Promise<number[]> {
+	const [owner, repoName] = repo.split("/");
+	const openBlockers: number[] = [];
+	for (const blockerNum of candidates) {
+		try {
+			const response = await client.rest.issues.get({
+				owner: owner ?? "",
+				repo: repoName ?? "",
+				issue_number: blockerNum,
+			});
+			if (response.data.state === "open") {
+				openBlockers.push(blockerNum);
+			}
+		} catch {
+			// If we can't fetch the blocker, assume it's open (conservative)
+			openBlockers.push(blockerNum);
+		}
+	}
+	return openBlockers;
+}
+
+/** Union native blocked-by links and "Blocked by #N" body text; resolve open state. */
+async function collectBlockers(
+	client: ForgeGitHubClient,
+	repo: string,
+	issueNumber: number,
+	body: string,
+): Promise<IssueBlockers> {
+	const native = await getNativeBlockerNumbers(client, repo, issueNumber);
+	const allBlockers = [...new Set([...native, ...parseBodyBlockers(body)])];
+	if (allBlockers.length === 0) {
+		return { openBlockers: [], allBlockers: [] };
+	}
+	return { openBlockers: await resolveOpenBlockers(client, repo, allBlockers), allBlockers };
+}
+
+/** Get blockers for an issue: native blocked-by links first, then body text. */
 export async function getBlockers(
 	client: ForgeGitHubClient,
 	repo: string,
 	issueNumber: number,
 ): Promise<IssueBlockers> {
-	// Fetch issue body + timeline events for cross-references
 	const [owner, repoName] = repo.split("/");
 
 	const issueResponse = await client.rest.issues.get({
@@ -46,34 +125,7 @@ export async function getBlockers(
 		issue_number: issueNumber,
 	});
 
-	const body = issueResponse.data.body ?? "";
-	const bodyBlockers = parseBodyBlockers(body);
-
-	// Deduplicate
-	const allBlockers = [...new Set(bodyBlockers)];
-	if (allBlockers.length === 0) {
-		return { openBlockers: [], allBlockers: [] };
-	}
-
-	// Check which blockers are still open
-	const openBlockers: number[] = [];
-	for (const blockerNum of allBlockers) {
-		try {
-			const blockerResponse = await client.rest.issues.get({
-				owner: owner ?? "",
-				repo: repoName ?? "",
-				issue_number: blockerNum,
-			});
-			if (blockerResponse.data.state === "open") {
-				openBlockers.push(blockerNum);
-			}
-		} catch {
-			// If we can't fetch the blocker, assume it's open (conservative)
-			openBlockers.push(blockerNum);
-		}
-	}
-
-	return { openBlockers, allBlockers };
+	return collectBlockers(client, repo, issueNumber, issueResponse.data.body ?? "");
 }
 
 /** Find the PR linked to an issue (via closing reference or cross-reference). */
@@ -107,7 +159,13 @@ export async function getLinkedPr(
 	return null;
 }
 
-/** Parse the Acceptance section of an issue body. */
+/**
+ * Parse the Acceptance section of an issue body.
+ *
+ * Complete = the section exists and every criterion bullet is written.
+ * Checkbox state is the worker's TDD checklist (unchecked at dispatch
+ * time by design) and does not gate promotion.
+ */
 export function parseAcceptance(body: string): AcceptanceStatus {
 	const lines = body.split("\n");
 
@@ -124,17 +182,22 @@ export function parseAcceptance(body: string): AcceptanceStatus {
 		return { complete: false, missing: ["no Acceptance section found"] };
 	}
 
-	// Collect unchecked boxes until the next heading
 	const missing: string[] = [];
+	let criteria = 0;
 	for (let i = startIndex; i < lines.length; i++) {
 		const line = lines[i]?.trim() ?? "";
 		if (line.startsWith("#")) {
 			break; // next section
 		}
-		const uncheckedMatch = line.match(/^-\s*\[\s*\]\s*(.+)/);
-		if (uncheckedMatch?.[1]) {
-			missing.push(uncheckedMatch[1].trim());
+		if (!line.startsWith("- ")) continue;
+		const text = (line.match(/^-\s*(?:\[[ xX]\]\s*)?(.*)/) ?? [])[1]?.trim() ?? "";
+		criteria += 1;
+		if (text === "" || /^\[[ xX]?\]$/.test(text)) {
+			missing.push(`criterion ${criteria} is empty`);
 		}
+	}
+	if (criteria === 0) {
+		missing.push("no acceptance criteria written");
 	}
 
 	return { complete: missing.length === 0, missing };
@@ -155,6 +218,31 @@ export async function getAcceptanceStatus(
 	});
 
 	return parseAcceptance(response.data.body ?? "");
+}
+
+/** Blockers + acceptance derived from a single issue fetch. */
+export interface IssueDetail {
+	blockers: IssueBlockers;
+	acceptance: AcceptanceStatus;
+}
+
+/** Fetch one issue and derive both blockers and acceptance status. */
+export async function getIssueDetail(
+	client: ForgeGitHubClient,
+	repo: string,
+	issueNumber: number,
+): Promise<IssueDetail> {
+	const [owner, repoName] = repo.split("/");
+
+	const response = await client.rest.issues.get({
+		owner: owner ?? "",
+		repo: repoName ?? "",
+		issue_number: issueNumber,
+	});
+	const body = response.data.body ?? "";
+
+	const blockers = await collectBlockers(client, repo, issueNumber, body);
+	return { blockers, acceptance: parseAcceptance(body) };
 }
 
 /** Fetch the full issue body for prompt construction. */

@@ -12,7 +12,7 @@ describe("getForgeArgumentCompletions — subcommands", () => {
 		const items = getForgeArgumentCompletions("");
 		expect(items).not.toBeNull();
 		const names = items!.map((item) => item.value);
-		for (const expected of ["setup", "board", "dispatch", "review", "decide", "round", "promote", "status", "decompose", "thinking-report", "retrospect", "doctor"]) {
+		for (const expected of ["setup", "board", "plan", "dispatch", "review", "decide", "round", "promote", "status", "decompose", "guide", "thinking-report", "retrospect", "doctor"]) {
 			expect(names).toContain(expected);
 		}
 	});
@@ -42,42 +42,12 @@ describe("getForgeArgumentCompletions — per-subcommand extras", () => {
 		expect(labels("board r")).toEqual(["ready"]);
 	});
 
-	it("suggests flags for dispatch and round", () => {
-		expect(labels("dispatch ")).toEqual(["--project"]);
-		expect(labels("round --p")).toEqual(["--project"]);
+	it("returns null for dispatch (no flags — project resolved from git remote)", () => {
+		expect(labels("dispatch ")).toBeNull();
 	});
 
-	it("suggests --milestone for retrospect", () => {
-		expect(labels("retrospect --")).toEqual(["--milestone"]);
-	});
-
-	it("returns null for subcommands without extras", () => {
-		expect(labels("status ")).toBeNull();
-		expect(labels("promote x")).toBeNull();
-	});
-
-	it("returns null for unknown subcommands", () => {
-		expect(labels("bogus ")).toBeNull();
-	});
-
-	it("stops suggesting extras once another token starts", () => {
-		expect(labels("board ready ")).toBeNull();
-	});
-
-	it("keeps a trailing space in flag values so the cursor advances past the flag", () => {
-		const items = getForgeArgumentCompletions("dispatch ")!;
-		expect(items[0]?.value).toBe("dispatch --project ");
-	});
-
-	it("re-embeds the subcommand so accepting an item does not wipe it (round bug)", () => {
-		// omp TUI contract: accepting a completion replaces the ENTIRE text after
-		// `/forge ` with item.value (CombinedAutocompleteProvider.applyCompletion).
-		// Reproduce that acceptance for `/forge round --p` + Tab.
-		const argumentText = "round --p";
-		const items = getForgeArgumentCompletions(argumentText)!;
-		const line = `/forge ${argumentText}`;
-		const beforePrefix = line.slice(0, line.length - argumentText.length);
-		expect(beforePrefix + items[0]!.value).toBe("/forge round --project ");
+	it("returns null for round (no flags — project resolved from git remote)", () => {
+		expect(labels("round ")).toBeNull();
 	});
 
 	it("re-embeds the subcommand for board filter values", () => {

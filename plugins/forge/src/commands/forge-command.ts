@@ -1,13 +1,13 @@
 /**
  * `/forge` slash command — routes subcommands.
  *
- *   setup     — interactive config discovery + .forge.toml generation
  *   board     — render board table grouped by Status
+ *   plan      — query-only round plan: dispatchable / blocked / reviewable / milestones
  *   decompose — LLM: create issues from spec slice
  *   dispatch  — verify blockers + move card + emit worker prompt
  *   review    — LLM: review PR against acceptance criteria
  *   decide    — record decision, close issue, report unblocked
- *   round     — orchestrate: dispatch → review → sync → promote
+ *   round     — sync board: promote unblocked → Ready, merged → Done
  *   promote   — find unblocked + acceptance-complete → move to Ready
  *   status    — one-liner per project (multi-repo)
  *   thinking-report — [v2] analyze thinking-level telemetry (requires self_improvement)
@@ -23,6 +23,12 @@ import { loadConfig } from "../config/forge-config-loader";
 import type { SingleProjectConfig, ForgeConfig } from "../config/forge-toml";
 import { getBlockers, getAcceptanceStatus, closeIssueWithComment, getIssueBody } from "../github/issue";
 import { buildReviewContract, formatReviewContract } from "../github/pr";
+import { buildForgePlan, formatForgePlan } from "../loop/plan";
+import { dispatchIssue } from "../loop/dispatch";
+import { syncBoard, formatSyncReport } from "../loop/round";
+import { resolveForge, resolveProjectConfig } from "../loop/resolve";
+import { installSkillTemplates, formatSkillInstallReport } from "../loop/install-skills";
+import { cmdGuide } from "./guide";
 import { writeFileSync } from "node:fs";
 import {
 	extractTelemetryEntries,
@@ -51,11 +57,11 @@ export function parseArgs(raw: string): { sub: string; args: string[] } {
 	return { sub: parts[0] ?? "", args: parts.slice(1) };
 }
 
-export const USAGE = "Usage: /forge <setup|board|decompose|dispatch|review|decide|round|promote|status|thinking-report|retrospect|doctor> [args]";
+export const USAGE = "Usage: /forge <setup|board|plan|decompose|dispatch|review|decide|round|promote|status|guide|thinking-report|retrospect|doctor> [args]";
 
 const KNOWN_SUBCOMMANDS = new Set([
-	"setup", "board", "decompose", "dispatch", "review",
-	"decide", "round", "promote", "status",
+	"setup", "board", "plan", "decompose", "dispatch", "review",
+	"decide", "round", "promote", "status", "guide",
 	"thinking-report", "retrospect", "doctor",
 ]);
 
@@ -85,17 +91,19 @@ async function routeSubcommand(
 ): Promise<void> {
 	switch (sub) {
 		case "board":     return cmdBoard(args, ctx);
+		case "plan":      return cmdPlan(ctx);
 		case "setup":     return cmdSetup(args, ctx);
 		case "promote":   return cmdPromote(ctx);
 		case "decide":    return cmdDecide(args, ctx);
 		case "dispatch":  return cmdDispatch(args, pi, ctx);
-		case "round":     return cmdRound(args, ctx);
+		case "round":     return cmdRound(ctx);
 		case "decompose": return cmdDecompose(args, pi, ctx);
 		case "review":    return cmdReview(args, pi, ctx);
 		case "status":           return cmdStatus(ctx);
 		case "thinking-report":  return cmdThinkingReport(ctx);
 		case "retrospect":       return cmdRetrospect(args, pi, ctx);
 		case "doctor":           return cmdDoctor(pi, ctx);
+		case "guide":            return cmdGuide(ctx);
 		default: return;
 	}
 }
@@ -110,55 +118,34 @@ function requireClient(ctx: ExtensionCommandContext) {
 	return client;
 }
 
-/** Extract --project flag from args, returning [projectName, remainingArgs]. */
-function extractProjectFlag(args: string[]): { projectName: string | undefined; rest: string[] } {
-	const idx = args.indexOf("--project");
-	if (idx !== -1 && idx + 1 < args.length) {
-		const projectName = args[idx + 1];
-		const rest = args.filter((_, i) => i !== idx && i !== idx + 1);
-		return { projectName, rest };
-	}
-	return { projectName: undefined, rest: args };
-}
-
-/** Load config, narrowing to a single project. Handles --project flag for multi-repo. */
-function requireConfig(
-	ctx: ExtensionCommandContext,
-	projectName?: string,
-): SingleProjectConfig | null {
-	const config = loadConfig(ctx.cwd);
-	if (config === null) {
-		if (ctx.hasUI) ctx.ui.notify("forge: .forge.toml not found. Run `/forge setup` first.", "error");
+/** Resolve client + config, notifying on failure. Shared by every
+ * board/command that needs both (setup/status use requireClient alone). */
+function requireForge(ctx: ExtensionCommandContext): { client: ForgeGitHubClient; config: SingleProjectConfig } | null {
+	const resolved = resolveForge(ctx.cwd);
+	if (resolved.ok === false) {
+		if (ctx.hasUI) ctx.ui.notify(`forge: ${resolved.error}`, "error");
 		return null;
 	}
-	if ("projects" in config) {
-		if (projectName === undefined) {
-			if (ctx.hasUI) ctx.ui.notify("forge: multi-project mode — use `--project <name>`.", "warning");
-			return null;
-		}
-		const project = config.projects.find(
-			(p) => p.repo.split("/")[1] === projectName || p.path === projectName,
-		);
-		if (project === undefined) {
-			if (ctx.hasUI) ctx.ui.notify(`forge: project "${projectName}" not found in .forge.toml.`, "error");
-			return null;
-		}
-		const { path: _path, ...single } = project;
-		void _path;
-		return single;
+	return resolved;
+}
+
+/** Resolve the single-project config from `.forge.toml` (no client). */
+function requireConfig(ctx: ExtensionCommandContext): SingleProjectConfig | null {
+	const resolved = resolveProjectConfig(ctx.cwd);
+	if (resolved.ok === false) {
+		if (ctx.hasUI) ctx.ui.notify(`forge: ${resolved.error}`, "error");
+		return null;
 	}
-	return config;
+	return resolved.config;
 }
 
 // --- /forge board ---
 
 async function cmdBoard(args: string[], ctx: ExtensionCommandContext): Promise<void> {
-	const { projectName, rest } = extractProjectFlag(args);
-	const filter = rest[0];
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx, projectName);
-	if (config === null) return;
+	const filter = args[0];
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
 
 	const state = await getBoardState(client, config);
 	const renderer: BoardRenderer = {
@@ -168,13 +155,23 @@ async function cmdBoard(args: string[], ctx: ExtensionCommandContext): Promise<v
 	renderBoard(state, filter, renderer);
 }
 
+// --- /forge plan (query-only; feeds the sdlc skill) ---
+
+async function cmdPlan(ctx: ExtensionCommandContext): Promise<void> {
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
+
+	const plan = await buildForgePlan(client, config);
+	if (ctx.hasUI) ctx.ui.notify(formatForgePlan(plan), "info");
+}
+
 // --- /forge promote (zero LLM) ---
 
 async function cmdPromote(ctx: ExtensionCommandContext): Promise<void> {
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx);
-	if (config === null) return;
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
 
 	const state = await getBoardState(client, config);
 	const backlogItems = state.items.filter((i) => i.status === "Backlog" && i.state === "OPEN");
@@ -190,6 +187,7 @@ async function cmdPromote(ctx: ExtensionCommandContext): Promise<void> {
 		if (!acceptance.complete) continue;
 
 		await moveCard(client, config, item.issueNumber, "ready");
+
 		promoted.push(item.issueNumber);
 	}
 
@@ -215,10 +213,9 @@ async function cmdDecide(args: string[], ctx: ExtensionCommandContext): Promise<
 	}
 
 	const decisionText = args.slice(1).join(" ");
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx);
-	if (config === null) return;
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
 
 	const comment = `## Decision\n\n${decisionText}`;
 	await closeIssueWithComment(client, config.repo, issueNum, comment);
@@ -249,58 +246,29 @@ async function cmdDecide(args: string[], ctx: ExtensionCommandContext): Promise<
 async function cmdDispatch(
 	args: string[], pi: ExtensionAPI, ctx: ExtensionCommandContext,
 ): Promise<void> {
-	const { projectName, rest } = extractProjectFlag(args);
-	if (rest.length < 1) {
-		if (ctx.hasUI) ctx.ui.notify("Usage: /forge dispatch <issue-number> [--project <name>]", "warning");
+	if (args.length < 1) {
+		if (ctx.hasUI) ctx.ui.notify("Usage: /forge dispatch <issue-number>", "warning");
 		return;
 	}
 
-	const issueNum = parseInt(rest[0] ?? "", 10);
+	const issueNum = parseInt(args[0] ?? "", 10);
 	if (Number.isNaN(issueNum)) {
 		if (ctx.hasUI) ctx.ui.notify("forge dispatch: invalid issue number.", "error");
 		return;
 	}
 
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx, projectName);
-	if (config === null) return;
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
 
-	// Verify unblocked
-	const blockers = await getBlockers(client, config.repo, issueNum);
-	if (blockers.openBlockers.length > 0) {
-		if (ctx.hasUI) {
-			ctx.ui.notify(
-				`forge dispatch: #${issueNum} blocked by open issues: ${blockers.openBlockers.map((n) => `#${n}`).join(", ")}.`,
-				"warning",
-			);
-		}
+	const result = await dispatchIssue(client, config, issueNum);
+	if (result.ok === false) {
+		if (ctx.hasUI) ctx.ui.notify(`forge dispatch: ${result.error}`, "warning");
 		return;
 	}
 
-	// Move card to In progress
-	await moveCard(client, config, issueNum, "in_progress");
-
-	// Build worker prompt from issue body
-	const body = await getIssueBody(client, config.repo, issueNum);
-	const gate = config.gate.map((g) => `  ${g}`).join("\n");
-	const slug = (config.repo.split("/")[1] ?? "task").toLowerCase();
-
-	const prompt = [
-		`Implement issue #${issueNum} in repo ${config.repo}.`,
-		"",
-		body,
-		"",
-		"## Rules (non-negotiable)",
-		`- Work in branch \`impl/${issueNum}-${slug}\`; never touch main.`,
-		"- TDD: write failing tests for each acceptance criterion first.",
-		"- Gate before yielding (ALL must pass, zero warnings):",
-		gate,
-		`- Open a draft PR with "Fixes #${issueNum}". Report PR URL + test names.`,
-	].join("\n");
-
 	pi.sendMessage(
-		{ content: [{ type: "text", text: prompt }] },
+		{ content: [{ type: "text", text: result.prompt }] },
 		{ triggerTurn: true, deliverAs: "nextTurn" },
 	);
 	if (ctx.hasUI) ctx.ui.notify(`forge dispatch: #${issueNum} moved to In progress, worker prompt emitted.`, "info");
@@ -308,60 +276,18 @@ async function cmdDispatch(
 
 // --- /forge round (TS orchestrates; LLM for dispatch + review) ---
 
-async function cmdRound(args: string[], ctx: ExtensionCommandContext): Promise<void> {
-	const { projectName } = extractProjectFlag(args);
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx, projectName);
-	if (config === null) return;
+async function cmdRound(ctx: ExtensionCommandContext): Promise<void> {
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
 
-	const state = await getBoardState(client, config);
-	const report: string[] = ["Forge round report:", ""];
-
-	// 1. Dispatch Ready issues (unblocked)
-	const readyItems = state.items.filter((i) => i.status === "Ready" && i.state === "OPEN");
-	const dispatchable: number[] = [];
-	for (const item of readyItems) {
-		const blockers = await getBlockers(client, config.repo, item.issueNumber);
-		if (blockers.openBlockers.length === 0) {
-			dispatchable.push(item.issueNumber);
-			await moveCard(client, config, item.issueNumber, "in_progress");
-		}
-	}
-	report.push(`Dispatched: ${dispatchable.length > 0 ? dispatchable.map((n) => `#${n}`).join(", ") : "(none)"}`);
-
-	// 2. Check PRs in In review — are they merged?
-	const inReviewItems = state.items.filter((i) => i.status === "In review" && i.state === "CLOSED");
-	const doneItems: number[] = [];
-	for (const item of inReviewItems) {
-		await moveCard(client, config, item.issueNumber, "done");
-		doneItems.push(item.issueNumber);
-	}
-	report.push(`Done (merged): ${doneItems.length > 0 ? doneItems.map((n) => `#${n}`).join(", ") : "(none)"}`);
-
-	// 3. Promote newly unblocked
-	const backlogItems = state.items.filter((i) => i.status === "Backlog" && i.state === "OPEN");
-	const promotable: number[] = [];
-	for (const item of backlogItems) {
-		const blockers = await getBlockers(client, config.repo, item.issueNumber);
-		if (blockers.openBlockers.length > 0) continue;
-		const acceptance = await getAcceptanceStatus(client, config.repo, item.issueNumber);
-		if (!acceptance.complete) continue;
-		await moveCard(client, config, item.issueNumber, "ready");
-		promotable.push(item.issueNumber);
-	}
-	report.push(`Promoted: ${promotable.length > 0 ? promotable.map((n) => `#${n}`).join(", ") : "(none)"}`);
-
-	// 4. Blocked
-	report.push(`Blocked (still in Backlog): ${backlogItems.length - promotable.length}`);
-
-	// 5. Decisions needed
-	const decisionsNeeded = state.items.filter((i) => i.title.includes("needs-decision"));
-	report.push(`Decisions needed: ${decisionsNeeded.length > 0 ? decisionsNeeded.map((i) => `#${i.issueNumber}`).join(", ") : "0"}`);
-
-	report.push("", "Next: run `/forge dispatch <N>` for dispatched issues when workers report PRs, `/forge review <N>` when ready.");
-
-	if (ctx.hasUI) ctx.ui.notify(report.join("\n"), "info");
+	const report = await syncBoard(client, config);
+	const text = [
+		formatSyncReport(report),
+		"",
+		"Next: `/forge plan` shows what is dispatchable/reviewable; dispatch via the sdlc skill or `/forge dispatch <N>`.",
+	].join("\n");
+	if (ctx.hasUI) ctx.ui.notify(text, "info");
 }
 
 // --- /forge review <N> (LLM) ---
@@ -380,10 +306,9 @@ async function cmdReview(
 		return;
 	}
 
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx);
-	if (config === null) return;
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const { client, config } = resolved;
 
 	const body = await getIssueBody(client, config.repo, num);
 	const contract = buildReviewContract(num, body);
@@ -419,10 +344,9 @@ async function cmdDecompose(
 	}
 
 	const slice = args[0] ?? "";
-	const client = requireClient(ctx);
-	if (client === null) return;
-	const config = requireConfig(ctx);
-	if (config === null) return;
+	const resolved = requireForge(ctx);
+	if (resolved === null) return;
+	const config = resolved.config;
 
 	const specIndex = config.specIndex ?? "docs/AGENTS.md";
 	const specPrefix = config.specIdPrefix ?? "REQ";
@@ -542,8 +466,13 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 	const configPath = join(cwd, ".forge.toml");
 	writeFileSync(configPath, `# .forge.toml — generated by forge setup\n\n${toml}\n`);
 
+	// Install loop skill templates (never overwrite existing skills)
+	const templatesRoot = join(import.meta.dirname, "..", "..", "templates");
+	const skillReport = installSkillTemplates(templatesRoot, cwd);
+
 	if (ctx.hasUI) {
 		ctx.ui.notify(`forge setup: wrote .forge.toml (project: ${selectedProject.title}).`, "info");
+		ctx.ui.notify(formatSkillInstallReport(skillReport), "info");
 	}
 }
 
@@ -593,23 +522,11 @@ function countByStatus(state: { items: Array<{ status: string }> }): Record<stri
 
 // --- v2: self-improvement gate helper ---
 
-/** Check if self_improvement is enabled. Returns config if yes, null if not. */
+/** Check if self_improvement is enabled for the resolved project. Returns config if yes, null if not. */
 function requireSelfImprovement(ctx: ExtensionCommandContext): SingleProjectConfig | null {
-	const config = loadConfig(ctx.cwd);
-	if (config === null) {
-		if (ctx.hasUI) ctx.ui.notify("forge: .forge.toml not found. Run `/forge setup` first.", "error");
-		return null;
-	}
-	if ("projects" in config) {
-		const enabled = config.projects.find((p) => p.selfImprovement === true);
-		if (enabled === undefined) {
-			if (ctx.hasUI) ctx.ui.notify("forge: this command requires `self_improvement = true` in .forge.toml.", "error");
-			return null;
-		}
-		const { path: _path, ...single } = enabled;
-		void _path;
-		return single;
-	}
+	const config = requireConfig(ctx);
+	if (config === null) return null;
+
 	if (config.selfImprovement !== true) {
 		if (ctx.hasUI) ctx.ui.notify("forge: this command requires `self_improvement = true` in .forge.toml.", "error");
 		return null;

@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import { parseArgs, USAGE } from "./forge-command";
+import { FORGE_GUIDE } from "./guide";
 import { renderBoard, type BoardRenderer } from "./board-render";
 import type { BoardState } from "../github/board";
 
@@ -23,6 +24,17 @@ describe("parseArgs", () => {
 	it("USAGE is a non-empty string", () => {
 		expect(USAGE.length).toBeGreaterThan(0);
 		expect(USAGE).toContain("forge");
+	});
+});
+
+describe("FORGE_GUIDE", () => {
+	it("covers the loop, board rules, plan reading, and troubleshooting", () => {
+		for (const section of ["THE LOOP", "BOARD RULES", "READING /forge plan", "TROUBLESHOOTING"]) {
+			expect(FORGE_GUIDE).toContain(section);
+		}
+		expect(FORGE_GUIDE).toContain("setup");
+		expect(FORGE_GUIDE).toContain("promote");
+		expect(FORGE_GUIDE).toContain("blocked by");
 	});
 });
 

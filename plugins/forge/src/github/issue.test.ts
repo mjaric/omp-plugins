@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { parseAcceptance, parseBodyBlockers } from "./issue";
+import { getIssueDetail, parseAcceptance, parseBodyBlockers } from "./issue";
+import type { ForgeGitHubClient } from "./client";
 
 describe("parseAcceptance", () => {
-	it("returns complete when all boxes checked", () => {
+	it("returns complete when all criteria are written", () => {
 		const body = `
 ## Scope
 Do the thing.
@@ -17,16 +18,38 @@ Do the thing.
 		expect(result.missing).toHaveLength(0);
 	});
 
-	it("returns incomplete with missing items", () => {
+	it("returns complete when criteria are written but unchecked", () => {
 		const body = `
 ## Acceptance
 - [x] REQ-001: verified by \`test_foo\`
 - [ ] REQ-002: verified by \`test_bar\`
-- [x] Gate: cargo test
+- [ ] Gate: cargo test
+`;
+		const result = parseAcceptance(body);
+		expect(result.complete).toBe(true);
+		expect(result.missing).toHaveLength(0);
+	});
+
+	it("returns incomplete with empty criterion bullets", () => {
+		const body = `
+## Acceptance
+- [x] REQ-001: verified by \`test_foo\`
+- [ ]
 `;
 		const result = parseAcceptance(body);
 		expect(result.complete).toBe(false);
-		expect(result.missing).toEqual(["REQ-002: verified by `test_bar`"]);
+		expect(result.missing).toEqual(["criterion 2 is empty"]);
+	});
+
+	it("returns incomplete when the section has no criteria", () => {
+		const body = `
+## Acceptance
+
+Prose only.
+`;
+		const result = parseAcceptance(body);
+		expect(result.complete).toBe(false);
+		expect(result.missing).toEqual(["no acceptance criteria written"]);
 	});
 
 	it("returns incomplete when no acceptance section exists", () => {
@@ -46,13 +69,14 @@ None.
 		const body = `
 ## Acceptance
 - [x] REQ-001
-- [ ] REQ-002
+- [ ]
 
 ## Dependencies
 - [ ] This should not be counted
 `;
 		const result = parseAcceptance(body);
-		expect(result.missing).toEqual(["REQ-002"]);
+		expect(result.complete).toBe(false);
+		expect(result.missing).toEqual(["criterion 2 is empty"]);
 	});
 });
 
@@ -79,5 +103,87 @@ describe("parseBodyBlockers", () => {
 	it("returns empty when no blocker text", () => {
 		const blockers = parseBodyBlockers("No dependencies.\n");
 		expect(blockers).toEqual([]);
+	});
+});
+
+describe("getIssueDetail", () => {
+	/** Mock client: issues keyed by number, state + body configurable. */
+	function mockClient(
+		issues: Record<number, { state: string; body: string }>,
+		native?: Record<number, Array<{ number: number; state: string }>>,
+	): ForgeGitHubClient {
+		return {
+			rest: {
+				issues: {
+					get: async (params: { issue_number: number }) => ({
+						data: issues[params.issue_number] ?? { state: "closed", body: "" },
+					}),
+				},
+			} as unknown as ForgeGitHubClient["rest"],
+			graphql: async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+				if (query.includes("blockedBy")) {
+					const num = Number(variables?.["number"]);
+					return { repository: { issue: { blockedBy: { nodes: native?.[num] ?? [] } } } } as T;
+				}
+				throw new Error("unexpected graphql");
+			},
+		};
+	}
+
+	const bodyWithBlocker = "Blocked by #1\n\n## Acceptance\n- [x] REQ-1\n";
+
+	it("derives blockers and acceptance from one fetch", async () => {
+		const client = mockClient({
+			10: { state: "open", body: bodyWithBlocker },
+			1: { state: "open", body: "" },
+		});
+		const detail = await getIssueDetail(client, "o/r", 10);
+		expect(detail.blockers.openBlockers).toEqual([1]);
+		expect(detail.acceptance.complete).toBe(true);
+	});
+
+	it("treats unfetchable blockers as open (conservative)", async () => {
+		const client: ForgeGitHubClient = {
+			rest: {
+				issues: {
+					get: async (params: { issue_number: number }) => {
+						if (params.issue_number === 10) {
+							return { data: { state: "open", body: "Blocked by #99" } };
+						}
+						throw new Error("404");
+					},
+				},
+			} as unknown as ForgeGitHubClient["rest"],
+			graphql: async () => {
+				throw new Error("unexpected graphql");
+			},
+		};
+		const detail = await getIssueDetail(client, "o/r", 10);
+		expect(detail.blockers.openBlockers).toEqual([99]);
+	});
+
+	it("reports empty acceptance criteria as incomplete", async () => {
+		const client = mockClient({
+			11: { state: "open", body: "## Acceptance\n- [ ] REQ-2\n- [ ]\n" },
+		});
+		const detail = await getIssueDetail(client, "o/r", 11);
+		expect(detail.blockers.openBlockers).toEqual([]);
+		expect(detail.acceptance.complete).toBe(false);
+		expect(detail.acceptance.missing).toEqual(["criterion 2 is empty"]);
+	});
+
+	it("unions native blocked-by relationships with body text", async () => {
+		const client = mockClient(
+			{
+				10: { state: "open", body: "Blocked by #1\n\n## Acceptance\n- [ ] REQ-2\n" },
+				1: { state: "open", body: "" },
+				2: { state: "closed", body: "" },
+			},
+			{ 10: [{ number: 2, state: "CLOSED" }, { number: 1, state: "OPEN" }] },
+		);
+		const detail = await getIssueDetail(client, "o/r", 10);
+		expect(detail.blockers.allBlockers).toEqual([2, 1]);
+		expect(detail.blockers.openBlockers).toEqual([1]);
+		expect(detail.acceptance.complete).toBe(true);
 	});
 });

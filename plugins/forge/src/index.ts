@@ -13,7 +13,14 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { registerForgeCommand } from "./commands/forge-command";
 import { loadConfig } from "./config/forge-config-loader";
+import { registerForgeTools } from "./loop/tools";
 import { createTurnEndHandler } from "./telemetry/telemetry";
+export default function forge(pi: ExtensionAPI): void {
+	registerForgeCommand(pi);
+	registerForgeTools(pi);
+	registerTelemetry(pi);
+	pi.logger.info("[forge] extension loaded");
+}
 
 /** Check if self-improvement is enabled in the config. */
 function isSelfImprovementEnabled(cwd: string): boolean {
@@ -34,8 +41,3 @@ function registerTelemetry(pi: ExtensionAPI): void {
 	pi.logger.info("[forge] self-improvement enabled — telemetry active");
 }
 
-export default function forge(pi: ExtensionAPI): void {
-	registerForgeCommand(pi);
-	registerTelemetry(pi);
-	pi.logger.info("[forge] extension loaded");
-}

@@ -96,7 +96,7 @@ Same binding contract as `file-graph` / `session-memory` specs:
 | Board card move | **TypeScript** (Octokit GraphQL mutation) | Mechanical, must be deterministic. |
 | Issue blocker check | **TypeScript** (Octokit REST) | Graph traversal, boolean result. |
 | CI status check | **TypeScript** (Octokit REST) | Poll check runs, parse state. |
-| Acceptance-complete check | **TypeScript** (parse issue body for `## Acceptance` section + unchecked boxes) | Regex/structure check. |
+| Acceptance-complete check | **TypeScript** (parse issue body for `## Acceptance` section + written criteria) | Regex/structure check. |
 | `.forge.toml` read/write | **TypeScript** | File I/O. |
 | `git submodule` operations | **TypeScript** (`pi.exec("git", [...])`) | Mechanical git. |
 | `/forge decide` (record + close + propagate) | **TypeScript** | Update issue body, close, find unblocked. |
@@ -182,7 +182,9 @@ duplicate-of) + body parsing for "Blocked by #N" lines. GitHub's native
 `blocked_by` relationships (if enabled) are checked first.
 
 `getAcceptanceSection` parses the issue body for a `## Acceptance` heading and
-counts unchecked `- [ ]` boxes. Complete = zero unchecked.
+checks that every criterion bullet is written. Complete = section exists with
+non-empty criteria; checkbox state is the worker's TDD checklist (unchecked at
+dispatch time by design) and does not gate promotion.
 
 ### PR operations (`github/pr.ts`)
 

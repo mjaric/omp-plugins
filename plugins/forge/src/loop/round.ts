@@ -1,14 +1,16 @@
 /**
  * Board sync — the mutation half of a round.
  *
- * Promotes unblocked + acceptance-complete Backlog items to Ready and
- * moves merged In review items to Done. Never dispatches workers and
- * never emits prompts; the skill owns orchestration.
+ * Promotes unblocked + acceptance-complete Backlog items to Ready, moves
+ * In progress items with a green-CI linked PR to In review (undrafting
+ * the PR), and moves merged In review items to Done. Never dispatches
+ * workers and never emits prompts; the skill owns orchestration.
  */
 
 import type { SingleProjectConfig } from "../config/forge-toml";
 import { getBoardState } from "../github/board";
-import { getBlockers, getAcceptanceStatus } from "../github/issue";
+import { getBlockers, getAcceptanceStatus, getLinkedPr } from "../github/issue";
+import { getCiStatus, markReadyForReview } from "../github/pr";
 import { moveCard } from "../github/board";
 import type { ForgeGitHubClient } from "../github/client";
 
@@ -16,6 +18,7 @@ import type { ForgeGitHubClient } from "../github/client";
 export interface SyncReport {
 	promoted: number[];
 	done: number[];
+	toReview: number[];
 	blockedCount: number;
 }
 
@@ -33,8 +36,19 @@ export async function syncBoard(
 		await moveCard(client, config, item.issueNumber, "done");
 		done.push(item.issueNumber);
 	}
+	// 2. In progress with linked PR + green CI → In review (undraft the PR)
+	const toReview: number[] = [];
+	const inProgress = state.items.filter((i) => i.status === "In progress" && i.state === "OPEN");
+	for (const item of inProgress) {
+		const pr = await getLinkedPr(client, config.repo, item.issueNumber);
+		if (pr === null) continue;
+		if ((await getCiStatus(client, config.repo, pr)) !== "pass") continue;
+		await markReadyForReview(client, config.repo, pr);
+		await moveCard(client, config, item.issueNumber, "in_review");
+		toReview.push(item.issueNumber);
+	}
 
-	// 2. Unblocked + acceptance-complete Backlog → Ready
+	// 3. Unblocked + acceptance-complete Backlog → Ready
 	const promoted: number[] = [];
 	let blockedCount = 0;
 	const backlogItems = state.items.filter((i) => i.status === "Backlog" && i.state === "OPEN");
@@ -50,7 +64,7 @@ export async function syncBoard(
 		promoted.push(item.issueNumber);
 	}
 
-	return { promoted, done, blockedCount };
+	return { promoted, done, toReview, blockedCount };
 }
 
 /** Format a sync report as a terse human-readable string. */
@@ -60,6 +74,7 @@ export function formatSyncReport(report: SyncReport): string {
 	return [
 		"Forge sync:",
 		`  Promoted to Ready: ${list(report.promoted)}`,
+		`  To In review:      ${list(report.toReview)}`,
 		`  Done (merged):     ${list(report.done)}`,
 		`  Blocked (Backlog): ${report.blockedCount}`,
 	].join("\n");

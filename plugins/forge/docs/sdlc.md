@@ -34,47 +34,56 @@ be bypassed by a persuasive prompt.
 
 ```mermaid
 flowchart TD
-    
+    classDef human fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;
+    classDef core fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,color:#374151;
+    classDef agent fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#166534;
 
-
-    subgraph Phase1 [1. Planning and preparation]
-        SPEC["🧓 Write spec slice"] 
+    subgraph Phase1 ["1. Planning and preparation &nbsp;"]
+        SPEC["🧓 Write spec slice"]
         DECOMP["🤖 Decomposer: spec to issues"]
-        BOARD["⚙️ Board state"] 
+        BOARD["🔨 Board state"]
         SPEC --> DECOMP --> BOARD
     end
 
-    subgraph Phase2 [2. Orchestration and checks]
-        PROMO["⚙️ Promotion rules"] 
-        ORCH["🤖 Orchestrator: sdlc loop"] 
-        BLOCK["⚙️ Blocker checks"] 
+    subgraph Phase2 ["2. Orchestration and checks &nbsp;"]
+        PROMO["🔨 Promotion rules"]
+        ORCH["🤖 Orchestrator: sdlc loop"]
+        BLOCK["🔨 Blocker checks"]
         DECIDE["🧓 Answer needs-decision"]
         BOARD --> PROMO --> ORCH
         ORCH -->|forge_dispatch| BLOCK
         DECIDE -->|forge decide| BLOCK
     end
 
-    subgraph Phase3 [3. Implementation and review]
-        WORK["🤖 Workers x4 max: TDD implementation"] 
-        CI["⚙️ CI status"] 
+    subgraph Phase3 ["3. Implementation and review &nbsp;"]
+        WORK["🤖 Workers x4 max: TDD implementation"]
+        CI["🔨 CI status"]
         REV["🤖 Reviewer: diff vs contract"]
         BLOCK --> WORK
         WORK --> REV
         CI --> REV
     end
 
-    subgraph Phase4 [4. Merging and synchronization]
-        MERGE["🧓 Merge PR — the gate"] 
-        REV -->|clean| MERGE
+    subgraph Phase4 ["4. Merging and synchronization &nbsp;"]
+        SYNC["🔨 forge_sync: card → In review, undraft PR"]
+        MERGE["🧓 Merge PR — the gate"]
+        REV -->|clean| SYNC
+        CI --> SYNC
+        SYNC --> MERGE
         MERGE -->|forge_sync| BOARD
     end
 
-    subgraph Phase5 [5. Retrospective and improvement]
+    subgraph Phase5 ["5. Retrospective and improvement &nbsp;"]
         RETRO["🤖 Retrospective agent: proposals"]
-        APPROVE["🧓 Approve retrospective diffs"] 
+        APPROVE["🧓 Approve retrospective diffs"]
         MERGE --> RETRO --> APPROVE
         APPROVE -->|rules, references, agents| ORCH
     end
+
+    %% Dodeljivanje klasa (boja i stilova) čvorovima
+    class SPEC,DECIDE,MERGE,APPROVE human
+    class DECOMP,ORCH,WORK,REV,RETRO agent
+    class BOARD,PROMO,BLOCK,CI,SYNC core
 ```
 
 ## 4. Issue lifecycle on the board
@@ -87,7 +96,7 @@ stateDiagram-v2
   [*] --> Backlog: Decomposer creates issue (acceptance written)
   Backlog --> Ready: forge_sync — rule: unblocked AND acceptance written
   Ready --> InProgress: forge_dispatch — orchestrator, verified unblocked
-  InProgress --> InReview: Worker opens draft PR
+  InProgress --> InReview: forge_sync — rule: linked PR AND CI green (undrafts PR)
   InReview --> InProgress: Reviewer findings — routed back to worker
   InReview --> Done: HUMAN MERGES
   Done --> [*]
@@ -101,6 +110,9 @@ Notes:
 - **Acceptance checklists are the contract.** Written with test names at
   decompose time, unchecked until implemented, verified at review time.
 - Promotion is a mechanical rule, not a judgment call — no LLM involved.
+- **Draft PRs are transient.** Workers open drafts per contract; `forge_sync`
+  undrafts the PR and moves the card to In review once the linked PR's CI is
+  green — the review and merge gates become visible and actionable.
 
 ## 5. One round of the loop
 
@@ -132,6 +144,7 @@ sequenceDiagram
     R-->>O: findings by severity
     O->>W: route back until clean
   else clean + CI green
+    O->>F: forge_sync (card -> In review, undraft PR)
     O->>H: ready — human merges
     H->>F: merge -> forge_sync -> Done
   end
@@ -150,7 +163,7 @@ C = Consulted, I = Informed.
 | Resolve decision | **A/R** | I (surfaces) | — | — | — | I (records) |
 | Dispatch | I | **A** | — | I | — | **R** (verify + move) |
 | Implement (TDD) | I | A (coordinates) | — | **R** | — | I (gate check) |
-| Review PR | I | A (routes findings) | — | C (fixes) | **R** | R (contract + CI) |
+| Review PR | I | A (routes findings; syncs card to In review) | — | C (fixes) | **R** | R (contract + CI) |
 | Merge | **A/R** | I | — | — | — | I (card → Done) |
 | Retrospective | **A** (approves) | I | — | — | — | R (collects data) |
 
@@ -164,6 +177,7 @@ else.
 |---|---|---|
 | **Promotion gate** | Forge core (rule) | Nothing reaches Ready without zero open blockers and a written acceptance section |
 | **Dispatch gate** | Forge core (rule) | Only Ready, unblocked issues are dispatched; refusal is silent-proof (board untouched) |
+| **Review-visibility gate** | Forge core (rule) | An In progress issue with a linked green-CI PR moves to In review and its draft PR is undrafted; forge never merges |
 | **Quality gate** | Worker + CI | Configured `gate` commands pass with zero warnings before a PR exists |
 | **Review gate** | Reviewer agent | Every acceptance criterion has a real test; no stubs/placeholders |
 | **Merge gate** | **Human** | Forge never merges or pushes to main; a PR waits for the owner |

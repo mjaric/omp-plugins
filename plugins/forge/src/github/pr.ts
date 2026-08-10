@@ -72,6 +72,30 @@ export async function getCiStatus(
 	return "pass";
 }
 
+/** GraphQL mutation to undraft a PR (REST has no ready-for-review endpoint). */
+const MARK_READY_MUTATION = `
+mutation($id: ID!) {
+	markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+		pullRequest { id }
+	}
+}`;
+
+/** Undraft a PR so the human merge gate is actionable. No-op when not a draft. */
+export async function markReadyForReview(
+	client: ForgeGitHubClient,
+	repo: string,
+	prNumber: number,
+): Promise<void> {
+	const [owner, repoName] = repo.split("/");
+	const prResponse = await client.rest.pulls.get({
+		owner: owner ?? "",
+		repo: repoName ?? "",
+		pull_number: prNumber,
+	});
+	if (prResponse.data.draft !== true) return;
+	await client.graphql<unknown>(MARK_READY_MUTATION, { id: prResponse.data.node_id });
+}
+
 /** Assemble the review contract from an issue body for the reviewer agent. */
 export function buildReviewContract(issueNumber: number, body: string): ReviewContract {
 	const sections = splitIntoSections(body);

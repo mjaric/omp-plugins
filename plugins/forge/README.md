@@ -59,7 +59,7 @@ Both are thin adapters over the same `src/loop` modules; there is one implementa
 | `/forge promote` | — | Find unblocked + acceptance-written → move to Ready |
 | `/forge decide <N> <decision text>` | — | Record decision, close issue, report unblocked |
 | `/forge status` | — | One-liner per project (multi-repo) |
-| `/forge guide` | — | Short user manual: loop order, board rules, troubleshooting |
+| `/forge round` | TS | Sync board: promote unblocked backlog → Ready, green-CI In progress → In review (undraft), merged → Done |
 | `/forge doctor` | — | Diagnose environment + board sync; offer fixes for stale IDs |
 | `/forge dispatch <N>` | TS + LLM | Verify blockers, move card, emit worker prompt |
 | `/forge round` | TS | Sync board: promote unblocked backlog → Ready, merged → Done |
@@ -73,7 +73,7 @@ Both are thin adapters over the same `src/loop` modules; there is one implementa
 | Tool | Approval | Effect |
 |---|---|---|
 | `forge_plan` | read | Round plan JSON: dispatchable, reviewable, promotable, blocked, needs-decision, milestone completion; nothing mutated |
-| `forge_sync` | write | Promote eligible backlog → Ready; merged In review → Done |
+| `forge_sync` | write | Promote eligible backlog → Ready; green-CI In progress → In review (undraft PR); merged In review → Done |
 | `forge_dispatch {issue}` | write | Verify unblocked, card → In progress, return worker prompt |
 | `forge_review {number}` | read | Return the acceptance review contract for an issue/PR |
 

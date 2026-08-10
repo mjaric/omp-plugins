@@ -115,7 +115,7 @@ radi uz njih u istoj sesiji (npr. istraživački repo sa spec-om u markdown-u).
 | `/forge promote` | forge | Premesta eligible Backlog issue-e u Ready |
 | `/forge dispatch <N>` | forge | Verifikacija blockera, kartica → In progress, ispisuje worker prompt |
 | `/forge review <N>` | forge | LLM review prompt protiv acceptance kriterijuma issue-ja |
-| `/forge round` | forge | Sinhronizacija board-a: promote odblokiranih, merged PR-ovi → Done |
+| `/forge round` | forge | Sinhronizacija board-a: promote odblokiranih, green-CI In progress → In review (undraft PR-a), merged PR-ovi → Done |
 | `/forge decompose <slice>` | forge | LLM: spec isečak → GitHub issue-i sa acceptance kriterijumima |
 | `/forge decide <N> <tekst>` | forge | Beleži odluku, zatvara issue, javlja šta se odblokiralo |
 | `/forge status` | forge | Jedna linija po konfigurisanom projektu |
@@ -124,7 +124,6 @@ radi uz njih u istoj sesiji (npr. istraživački repo sa spec-om u markdown-u).
 | `/forge retrospect [--milestone N]` | forge | Retrospektiva milestone-a: nalazi + preporuke (opt-in, `self_improvement`) |
 
 ### Alatke (dostupne agentu)
-
 | Alatka | Plugin | Parametri | Čemu služi |
 |---|---|---|---|
 | `fg_search` | file-graph | `query`, `limit?` | Full-text pretraga + 1-hop proširenje po grafu |
@@ -132,12 +131,11 @@ radi uz njih u istoj sesiji (npr. istraživački repo sa spec-om u markdown-u).
 | `fg_relations` | file-graph | `entity?`, `file?`, `view?` (`list`\|`mermaid`) | Tipizovane veze za entitet ili fajl |
 | `fg_suggest` | file-graph | `prompt`, `limit?` | Kandidati relevantni za prompt (agent-driven alternativa za `alt+g`) |
 | `fg_export` | file-graph | `ubiquitousLanguagePath`, `graphPath` | Izvoz glossary + edge liste u fajlove |
-| `fg_stats` | file-graph | — | Statistika grafa, dangling refs, missing purpose |
 | `smem_recall` | session-memory | `query` | Eksplicitno prisećanje: vraća chunk-ove koji **nisu** već u kontekstu |
 | `smem_stats` | session-memory | — | Indeks + telemetrijski agregati |
 | `smem_status` | session-memory | — | Zdravlje endpoint lanca, veličina indeksa, aktivni režim |
 | `forge_plan` | forge | — | Plan runde (read-only): dispatchable / promotable / blocked / reviewable / milestone-i |
-| `forge_sync` | forge | — | Promote eligible Backlog → Ready; merged In review → Done |
+| `forge_sync` | forge | — | Promote eligible Backlog → Ready; green-CI In progress → In review (undraft PR-a); merged In review → Done |
 | `forge_dispatch` | forge | `issue` | Verifikacija blockera, kartica → In progress, vraća worker prompt |
 | `forge_review` | forge | `number` | Acceptance ugovor (review contract) za issue/PR |
 
@@ -488,11 +486,12 @@ koda (worker) i `review` (analiza diff-a). **Granica je human-gated: forge
 nikad ne merge-uje i ne push-uje.** Organizacioni model (uloge, ovlašćenja,
 gate-ovi) opisan je u `plugins/forge/docs/sdlc.md`.
 
-Redosled jedne runde: `forge_sync` (promote + merged → Done) → `forge_plan`
-→ dispatch do 4 worker-a → review → ponovi. Zaustavljanje: milestone gotov,
-board idle, `needs-decision` issue, ili vi kažete stop. Autopilot: recite
-agentu „pokreni petlju" — `sdlc` skill (instaliran u `.omp/skills/`) vozi
-ceo protokol; projektne korekcije idu u `.omp/skills/sdlc/rules/`.
+Redosled jedne runde: `forge_sync` (promote + green-CI In progress → In review +
+merged → Done) → `forge_plan` → dispatch do 4 worker-a → review → ponovi.
+Zaustavljanje: milestone gotov, board idle, `needs-decision` issue, ili vi
+kažete stop. Autopilot: recite agentu „pokreni petlju" — `sdlc` skill
+(instaliran u `.omp/skills/`) vozi ceo protokol; projektne korekcije idu u
+`.omp/skills/sdlc/rules/`.
 
 ### 8.2 Board i pravila (šta forge proverava)
 
@@ -504,6 +503,9 @@ ceo protokol; projektne korekcije idu u `.omp/skills/sdlc/rules/`.
   Checkbox-ovi su worker-ov TDD checklist: pišu se kao `- [ ]` na decompose-u
   i ostaju nečekirani do implementacije — nečekiran box **ne sprečava**
   promociju.
+- **In progress → In review** — kad worker otvori draft PR i CI postane
+  green, `forge_sync` (ili `/forge round`) prebacuje karticu u In review i
+  skida draft sa PR-a — review i merge gate postaju vidljivi i actionable.
 - **Dispatch (Ready → In progress)** — samo bez otvorenih blockera; worker
   prompt se sklapa iz issue-ja (Scope + Spec references + Acceptance + gate
   iz `.forge.toml`).

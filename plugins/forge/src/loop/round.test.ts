@@ -34,9 +34,13 @@ function mockClient(opts: {
 	board: BoardItemSpec[];
 	issues?: Record<number, IssueSpec>;
 	native?: Record<number, Array<{ number: number; state: string }>>;
-}): ForgeGitHubClient & { movedCards: Array<{ issue: number; status: string }> } {
+	linkedPr?: Record<number, number>;
+	ci?: Record<string, Array<{ status: string; conclusion: string | null }>>;
+	drafts?: Record<number, boolean>;
+}): ForgeGitHubClient & { movedCards: Array<{ issue: number; status: string }>; undrafted: number[] } {
 	const issues = opts.issues ?? {};
 	const movedCards: Array<{ issue: number; status: string }> = [];
+	const undrafted: number[] = [];
 	const statusByOption: Record<string, string> = {
 		opt_backlog: "backlog",
 		opt_ready: "ready",
@@ -50,12 +54,35 @@ function mockClient(opts: {
 				get: async (params: { issue_number: number }) => ({
 					data: issues[params.issue_number] ?? { state: "closed", body: "" },
 				}),
+				listEventsForTimeline: async (params: { issue_number: number }) => ({
+					data: opts.linkedPr?.[params.issue_number] !== undefined
+						? [{
+							event: "cross-referenced",
+							source: { issue: { number: opts.linkedPr[params.issue_number], pull_request: {} } },
+						}]
+						: [],
+				}),
+			},
+			pulls: {
+				get: async (params: { pull_number: number }) => ({
+					data: {
+						head: { sha: "abc123" },
+						draft: opts.drafts?.[params.pull_number] ?? false,
+						node_id: `node_${params.pull_number}`,
+					},
+				}),
+			},
+			checks: {
+				listForRef: async (params: { ref: string }) => ({
+					data: { check_runs: opts.ci?.[params.ref] ?? [] },
+				}),
 			},
 		} as unknown as ForgeGitHubClient["rest"],
 		graphql: async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
-			if (query.includes("blockedBy")) {
-				const num = Number(variables?.["number"]);
-				return { repository: { issue: { blockedBy: { nodes: opts.native?.[num] ?? [] } } } } as T;
+			if (query.includes("markPullRequestReadyForReview")) {
+				const id = String(variables?.["id"] ?? "");
+				undrafted.push(parseInt(id.replace("node_", ""), 10));
+				return { markPullRequestReadyForReview: { pullRequest: { id } } } as T;
 			}
 			if (query.includes("fieldValues(first: 30)")) {
 				return {
@@ -99,6 +126,7 @@ function mockClient(opts: {
 			throw new Error("unexpected graphql");
 		},
 		movedCards,
+		undrafted,
 	};
 }
 
@@ -153,23 +181,43 @@ describe("syncBoard", () => {
 		expect(client.movedCards).toEqual([{ issue: 5, status: "done" }]);
 	});
 
-	it("does not dispatch or move In progress / Ready items", async () => {
+	it("moves In progress items with a green-CI linked PR to In review", async () => {
 		const client = mockClient({
-			board: [
-				{ number: 4, title: "working", state: "OPEN", status: "In progress" },
-				{ number: 8, title: "ready", state: "OPEN", status: "Ready" },
-			],
+			board: [{ number: 4, title: "working", state: "OPEN", status: "In progress" }],
+			issues: { 4: { state: "open", body: "" } },
+			linkedPr: { 4: 17 },
+			drafts: { 17: true },
+			ci: { abc123: [{ status: "completed", conclusion: "success" }] },
 		});
 		const report = await syncBoard(client, baseConfig);
-		expect(report).toEqual({ promoted: [], done: [], blockedCount: 0 });
+		expect(report.toReview).toEqual([4]);
+		expect(client.movedCards).toEqual([{ issue: 4, status: "in_review" }]);
+		expect(client.undrafted).toEqual([17]);
+	});
+
+	it("leaves In progress items whose CI is not green or PR missing", async () => {
+		const client = mockClient({
+			board: [
+				{ number: 4, title: "pending ci", state: "OPEN", status: "In progress" },
+				{ number: 8, title: "no pr yet", state: "OPEN", status: "In progress" },
+				{ number: 9, title: "ready", state: "OPEN", status: "Ready" },
+			],
+			issues: { 4: { state: "open", body: "" }, 8: { state: "open", body: "" } },
+			linkedPr: { 4: 17 },
+			ci: { abc123: [{ status: "in_progress", conclusion: null }] },
+		});
+		const report = await syncBoard(client, baseConfig);
+		expect(report).toEqual({ promoted: [], done: [], toReview: [], blockedCount: 0 });
 		expect(client.movedCards).toEqual([]);
+		expect(client.undrafted).toEqual([]);
 	});
 });
 
 describe("formatSyncReport", () => {
-	it("lists promoted and done issues", () => {
-		const out = formatSyncReport({ promoted: [1, 2], done: [5], blockedCount: 3 });
+	it("lists promoted, review-bound, and done issues", () => {
+		const out = formatSyncReport({ promoted: [1, 2], done: [5], toReview: [4], blockedCount: 3 });
 		expect(out).toContain("#1, #2");
+		expect(out).toContain("#4");
 		expect(out).toContain("#5");
 		expect(out).toContain("3");
 	});

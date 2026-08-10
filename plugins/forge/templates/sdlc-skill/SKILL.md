@@ -15,7 +15,7 @@ reviewing results, and knowing when to stop.
 | Tool | Effect | Mutates? |
 |---|---|---|
 | `forge_plan` | Round plan: dispatchable / reviewable / promotable / blocked / milestones | No |
-| `forge_sync` | Promote unblocked Backlog → Ready; merged In review → Done | Yes |
+| `forge_sync` | Promote unblocked Backlog → Ready; green-CI In progress → In review (undraft PR); merged In review → Done | Yes |
 | `forge_dispatch {issue}` | Verify unblocked, card → In progress, returns worker prompt | Yes |
 | `forge_review {number}` | Returns the review contract for an issue/PR | No |
 | `task` | Spawn worker / reviewer subagents (isolated worktrees) | Yes |
@@ -87,7 +87,8 @@ For each item in `reviewable`:
      diff via `pr://<PR>/diff/all`. Check every acceptance criterion has a
      real test, the gate passes, and there are no stubs/placeholders. Report
      findings by severity.
-3. Clean + CI green → leave for the user to merge (human-gated boundary).
+3. Clean + CI green → `forge_sync` moves the card to In review and undrafts
+   the PR; leave it for the user to merge (human-gated boundary).
    Findings → route back to the same worker (via `hub` message or a
    follow-up task) until clean.
 

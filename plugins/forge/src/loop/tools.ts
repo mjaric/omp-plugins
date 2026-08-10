@@ -67,7 +67,8 @@ export function registerForgeTools(pi: ExtensionAPI): void {
 		name: "forge_sync",
 		label: "Forge Sync",
 		description:
-			"Sync the board: promote unblocked + acceptance-complete Backlog issues to Ready and " +
+			"Sync the board: promote unblocked + acceptance-complete Backlog issues to Ready, move " +
+			"In progress issues with a linked green-CI PR to In review (undrafting the PR), and " +
 			"move merged In review issues to Done. This is the board-sync half of a round; it does " +
 			"not dispatch workers. Run after dispatch/review work settles.",
 		approval: "write",

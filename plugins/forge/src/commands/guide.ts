@@ -14,7 +14,8 @@ Forge — short user manual
 THE LOOP (in order)
   setup        once per repo: discover the Projects v2 board, write .forge.toml,
                install the sdlc + forge-retrospect skills into .omp/skills/
-  decompose N  LLM: turn spec slice N into Backlog issues with written acceptance
+  round        sync the board (promote unblocked; green-CI In progress -> In review;
+               merged PRs -> Done)
   promote      move unblocked, acceptance-written issues Backlog -> Ready
   dispatch N   verify blockers, card -> In progress, print the worker prompt
   round        sync the board (promote unblocked; merged PRs -> Done)

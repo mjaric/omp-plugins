@@ -21,8 +21,8 @@ import { fetchStatusField, getBoardState, moveCard } from "../github/board";
 import { getGitHubClient, type ForgeGitHubClient } from "../github/client";
 import { loadConfig } from "../config/forge-config-loader";
 import type { SingleProjectConfig, ForgeConfig } from "../config/forge-toml";
-import { getBlockers, getAcceptanceStatus, closeIssueWithComment, getIssueBody } from "../github/issue";
-import { buildReviewContract, formatReviewContract } from "../github/pr";
+import { getBlockers, getAcceptanceStatus, closeIssueWithComment } from "../github/issue";
+import { assembleReviewContract, formatReviewContract } from "../github/pr";
 import { buildForgePlan, formatForgePlan } from "../loop/plan";
 import { dispatchIssue } from "../loop/dispatch";
 import { syncBoard, formatSyncReport } from "../loop/round";
@@ -281,7 +281,7 @@ async function cmdRound(ctx: ExtensionCommandContext): Promise<void> {
 	if (resolved === null) return;
 	const { client, config } = resolved;
 
-	const report = await syncBoard(client, config);
+	const report = await syncBoard(client, config, ctx.cwd);
 	const text = [
 		formatSyncReport(report),
 		"",
@@ -310,19 +310,19 @@ async function cmdReview(
 	if (resolved === null) return;
 	const { client, config } = resolved;
 
-	const body = await getIssueBody(client, config.repo, num);
-	const contract = buildReviewContract(num, body);
-	const contractStr = formatReviewContract(contract);
+	const full = await assembleReviewContract(client, config.repo, num);
+	const contractStr = formatReviewContract(full, full.feedback);
 
 	const prompt = [
 		`Review the change for issue/pr #${num} against its acceptance criteria.`,
 		"",
 		contractStr,
 		"",
-		`Fetch the diff via \`pr://${num}/diff/all\` and check:`,
+		`Fetch the diff via \`pr://${full.pr ?? num}/diff/all\` and check:`,
 		"- Does every acceptance criterion have a real test?",
 		"- Zero-warnings gate (all gate commands pass)?",
 		"- Anti-patterns: no stubs, no placeholders, no bypass of invariants.",
+		"- Address every item under Human review feedback above.",
 		"Report findings by severity. Clean → recommend merge.",
 	].join("\n");
 

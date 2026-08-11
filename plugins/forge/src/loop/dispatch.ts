@@ -8,21 +8,35 @@
 
 import type { SingleProjectConfig } from "../config/forge-toml";
 import { moveCard } from "../github/board";
-import { getBlockers, getIssueBody } from "../github/issue";
+import { getBlockers, getIssueTitleAndBody } from "../github/issue";
 import type { ForgeGitHubClient } from "../github/client";
 
 export type DispatchResult =
 	| { ok: true; prompt: string }
 	| { ok: false; error: string };
 
+/** Slugify an issue title into a branch-suffix token. Exported for testing. */
+export function slugifyTitle(title: string): string {
+	const slug = title
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return slug.slice(0, 40) || "task";
+}
+
+/** Branch name for a dispatched issue: `impl/<issue>-<title-slug>`. */
+export function workerBranch(issueNum: number, title: string): string {
+	return `impl/${issueNum}-${slugifyTitle(title)}`;
+}
+
 /** Build the worker prompt for an issue (issue body + rules + gate). */
 export function buildWorkerPrompt(
 	config: SingleProjectConfig,
 	issueNum: number,
+	title: string,
 	body: string,
 ): string {
 	const gate = config.gate.map((g) => `  ${g}`).join("\n");
-	const slug = (config.repo.split("/")[1] ?? "task").toLowerCase();
 
 	return [
 		`Implement issue #${issueNum} in repo ${config.repo}.`,
@@ -30,7 +44,7 @@ export function buildWorkerPrompt(
 		body,
 		"",
 		"## Rules (non-negotiable)",
-		`- Work in branch \`impl/${issueNum}-${slug}\`; never touch main.`,
+		`- Work in branch \`${workerBranch(issueNum, title)}\`; never touch main.`,
 		"- TDD: write failing tests for each acceptance criterion first.",
 		"- Gate before yielding (ALL must pass, zero warnings):",
 		gate,
@@ -55,6 +69,6 @@ export async function dispatchIssue(
 	}
 
 	await moveCard(client, config, issueNum, "in_progress");
-	const body = await getIssueBody(client, config.repo, issueNum);
-	return { ok: true, prompt: buildWorkerPrompt(config, issueNum, body) };
+	const issue = await getIssueTitleAndBody(client, config.repo, issueNum);
+	return { ok: true, prompt: buildWorkerPrompt(config, issueNum, issue.title, issue.body) };
 }

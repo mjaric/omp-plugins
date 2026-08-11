@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildWorkerPrompt, dispatchIssue } from "./dispatch";
+import { buildWorkerPrompt, dispatchIssue, slugifyTitle, workerBranch } from "./dispatch";
 import type { SingleProjectConfig } from "../config/forge-toml";
 import type { ForgeGitHubClient } from "../github/client";
 
@@ -30,7 +30,7 @@ function readMoveVariables(variables?: Record<string, unknown>): { optionId: str
 
 /** Mock client: issue bodies/states via rest, board item lookup + move via graphql. */
 function mockClient(opts: {
-	issues: Record<number, { state: string; body: string }>;
+	issues: Record<number, { state: string; body: string; title?: string }>;
 	boardNumbers?: number[];
 }): ForgeGitHubClient & { movedCards: Array<{ issue: number; status: string }> } {
 	const movedCards: Array<{ issue: number; status: string }> = [];
@@ -38,7 +38,11 @@ function mockClient(opts: {
 		rest: {
 			issues: {
 				get: async (params: { issue_number: number }) => ({
-					data: opts.issues[params.issue_number] ?? { state: "closed", body: "" },
+					data: {
+						state: opts.issues[params.issue_number]?.state ?? "closed",
+						title: opts.issues[params.issue_number]?.title ?? "Untitled task",
+						body: opts.issues[params.issue_number]?.body ?? "",
+					},
 				}),
 			},
 		} as unknown as ForgeGitHubClient["rest"],
@@ -78,12 +82,37 @@ function mockClient(opts: {
 	return client;
 }
 
+describe("slugifyTitle", () => {
+	it("lowercases, dashes, and trims", () => {
+		expect(slugifyTitle("Model API CRUD: Elements & Relationships!")).toBe(
+			"model-api-crud-elements-relationships",
+		);
+	});
+
+	it("caps length at 40 characters", () => {
+		const slug = slugifyTitle("a".repeat(100));
+		expect(slug.length).toBe(40);
+	});
+
+	it("falls back to task for empty-ish titles", () => {
+		expect(slugifyTitle("")).toBe("task");
+		expect(slugifyTitle("!!!")).toBe("task");
+	});
+});
+
+describe("workerBranch", () => {
+	it("uses the issue number and title slug — never the repo name", () => {
+		expect(workerBranch(42, "Add ownership closure table")).toBe("impl/42-add-ownership-closure-table");
+	});
+});
+
 describe("buildWorkerPrompt", () => {
-	it("includes issue body, branch rule, TDD rule, and gate", () => {
-		const prompt = buildWorkerPrompt(baseConfig, 42, "## Scope\nDo it.");
+	it("includes issue body, title-derived branch rule, TDD rule, and gate", () => {
+		const prompt = buildWorkerPrompt(baseConfig, 42, "Add ownership closure table", "## Scope\nDo it.");
 		expect(prompt).toContain("Implement issue #42 in repo mjaric/smith.");
 		expect(prompt).toContain("## Scope\nDo it.");
-		expect(prompt).toContain("impl/42-smith");
+		expect(prompt).toContain("impl/42-add-ownership-closure-table");
+		expect(prompt).not.toContain("impl/42-smith");
 		expect(prompt).toContain("cargo test");
 		expect(prompt).toContain(`"Fixes #42"`);
 	});
@@ -92,12 +121,13 @@ describe("buildWorkerPrompt", () => {
 describe("dispatchIssue", () => {
 	it("moves the card and returns the worker prompt when unblocked", async () => {
 		const client = mockClient({
-			issues: { 42: { state: "open", body: "## Acceptance\n- [x] REQ-1" } },
+			issues: { 42: { state: "open", body: "## Acceptance\n- [x] REQ-1", title: "Store blob data" } },
 		});
 		const result = await dispatchIssue(client, baseConfig, 42);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
 			expect(result.prompt).toContain("Implement issue #42");
+			expect(result.prompt).toContain("impl/42-store-blob-data");
 		}
 		expect(client.movedCards).toEqual([{ issue: 42, status: "in_progress" }]);
 	});

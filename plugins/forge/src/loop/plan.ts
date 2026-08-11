@@ -52,6 +52,13 @@ export interface ReviewableItem {
 	ci: CiState;
 }
 
+/** An In progress issue whose PR was bounced back for rework. */
+export interface ReworkItem {
+	issue: number;
+	title: string;
+	pr: number;
+}
+
 /** An open issue whose title flags an unresolved decision. */
 export interface NeedsDecisionItem {
 	issue: number;
@@ -75,6 +82,7 @@ export interface ForgePlan {
 	notReady: NotReadyItem[];
 	promotable: PromotableItem[];
 	reviewable: ReviewableItem[];
+	rework: ReworkItem[];
 	inProgress: number[];
 	needsDecision: NeedsDecisionItem[];
 	milestones: MilestoneSummary[];
@@ -195,6 +203,7 @@ export async function buildForgePlan(
 	const notReady: NotReadyItem[] = [];
 	const promotable: PromotableItem[] = [];
 	const reviewable: ReviewableItem[] = [];
+	const rework: ReworkItem[] = [];
 	const inProgress: number[] = [];
 	const needsDecision: NeedsDecisionItem[] = [];
 
@@ -208,7 +217,12 @@ export async function buildForgePlan(
 		} else if (item.status === "Backlog") {
 			await classifyBacklog(client, config, item, blocked, notReady, promotable);
 		} else if (item.status === "In progress") {
-			inProgress.push(item.issueNumber);
+			const pr = await getLinkedPr(client, config.repo, item.issueNumber);
+			if (pr !== null) {
+				rework.push({ issue: item.issueNumber, title: item.title, pr });
+			} else {
+				inProgress.push(item.issueNumber);
+			}
 		} else if (item.status === "In review") {
 			await classifyInReview(client, config, item, reviewable);
 		}
@@ -217,6 +231,7 @@ export async function buildForgePlan(
 	const actionable =
 		dispatchable.length > 0 ||
 		reviewable.length > 0 ||
+		rework.length > 0 ||
 		promotable.length > 0 ||
 		notReady.length > 0 ||
 		needsDecision.length > 0;
@@ -228,10 +243,11 @@ export async function buildForgePlan(
 		notReady,
 		promotable,
 		reviewable,
+		rework,
 		inProgress,
 		needsDecision,
 		milestones: summarizeMilestones(state.items),
-		idle: !actionable && inProgress.length === 0,
+		idle: !actionable && inProgress.length === 0 && rework.length === 0,
 	};
 }
 
@@ -244,10 +260,11 @@ export function formatForgePlan(plan: ForgePlan): string {
 		"",
 		`Dispatchable: ${list(plan.dispatchable)}`,
 		`Reviewable:   ${list(plan.reviewable)}`,
+		`Rework:       ${plan.rework.length > 0 ? plan.rework.map((r) => `#${r.issue} (PR #${r.pr})`).join(", ") : "(none)"}`,
+		`In progress:  ${plan.inProgress.length > 0 ? plan.inProgress.map((n) => `#${n}`).join(", ") : "(none)"}`,
 		`Promotable:   ${list(plan.promotable)}`,
 		`Blocked:      ${list(plan.blocked)}`,
 		`Not ready:    ${list(plan.notReady)}`,
-		`In progress:  ${plan.inProgress.length > 0 ? plan.inProgress.map((n) => `#${n}`).join(", ") : "(none)"}`,
 		`Decisions:    ${list(plan.needsDecision)}`,
 	];
 	for (const m of plan.milestones) {

@@ -23,8 +23,7 @@ import { buildForgePlan, capDispatchable, formatForgePlan } from "./plan";
 import { dispatchIssue } from "./dispatch";
 import { syncBoard, formatSyncReport } from "./round";
 import { resolveForge } from "./resolve";
-import { getIssueBody } from "../github/issue";
-import { buildReviewContract, formatReviewContract } from "../github/pr";
+import { assembleReviewContract, formatReviewContract } from "../github/pr";
 
 /** Max concurrent workers the loop may dispatch (see AGENTS.md / skill). */
 const MAX_WORKERS = 4;
@@ -68,9 +67,11 @@ export function registerForgeTools(pi: ExtensionAPI): void {
 		label: "Forge Sync",
 		description:
 			"Sync the board: promote unblocked + acceptance-complete Backlog issues to Ready, move " +
-			"In progress issues with a linked green-CI PR to In review (undrafting the PR), and " +
-			"move merged In review issues to Done. This is the board-sync half of a round; it does " +
-			"not dispatch workers. Run after dispatch/review work settles.",
+			"In progress issues with a linked green-CI PR to In review (undrafting the PR), bounce " +
+			"In review issues back to In progress when a reviewer requested changes, move merged " +
+			"In review issues to Done, and clean up merged-PR worktrees/branches locally. This is " +
+			"the board-sync half of a round; it does not dispatch workers. Run after dispatch/review " +
+			"work settles.",
 		approval: "write",
 		parameters: emptyParams,
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
@@ -78,7 +79,7 @@ export function registerForgeTools(pi: ExtensionAPI): void {
 			if (resolved.ok === false) {
 				return errorResult(`forge sync: ${resolved.error}`);
 			}
-			const report = await syncBoard(resolved.client, resolved.config);
+			const report = await syncBoard(resolved.client, resolved.config, ctx.cwd);
 			return {
 				content: [{ type: "text", text: formatSyncReport(report) }],
 				details: report,
@@ -121,9 +122,10 @@ export function registerForgeTools(pi: ExtensionAPI): void {
 		name: "forge_review",
 		label: "Forge Review",
 		description:
-			"Assemble the review contract for an issue/PR from its acceptance criteria. Pass the " +
-			"returned contract to the `reviewer` agent (via `task`) along with the diff " +
-			"(pr://<N>/diff/all) to review the change.",
+			"Assemble the review contract for an issue/PR from its acceptance criteria AND human " +
+			"review feedback (latest verdicts + comments). Pass the returned contract to the " +
+			"`reviewer` agent (via `task`) along with the diff (pr://<N>/diff/all) to review the " +
+			"change.",
 		approval: "read",
 		parameters: reviewParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -131,12 +133,11 @@ export function registerForgeTools(pi: ExtensionAPI): void {
 			if (resolved.ok === false) {
 				return errorResult(`forge review: ${resolved.error}`);
 			}
-			const body = await getIssueBody(resolved.client, resolved.config.repo, params.number);
-			const contract = buildReviewContract(params.number, body);
-			const contractStr = formatReviewContract(contract);
+			const full = await assembleReviewContract(resolved.client, resolved.config.repo, params.number);
+			const contractStr = formatReviewContract(full, full.feedback);
 			return {
 				content: [{ type: "text", text: contractStr }],
-				details: { number: params.number, contract: contractStr },
+				details: { number: params.number, pr: full.pr, requestedChanges: full.feedback.requestedChanges, contract: contractStr },
 			};
 		},
 	});

@@ -265,6 +265,7 @@ describe("formatForgePlan", () => {
 		notReady: [],
 		promotable: [],
 		reviewable: [],
+		rework: [],
 		inProgress: [],
 		needsDecision: [],
 		milestones: [],

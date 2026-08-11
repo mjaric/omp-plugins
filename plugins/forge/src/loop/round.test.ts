@@ -37,6 +37,8 @@ function mockClient(opts: {
 	linkedPr?: Record<number, number>;
 	ci?: Record<string, Array<{ status: string; conclusion: string | null }>>;
 	drafts?: Record<number, boolean>;
+	reviews?: Record<number, Array<{ state: string; user: string; body?: string }>>;
+	headRefs?: Record<number, string>;
 }): ForgeGitHubClient & { movedCards: Array<{ issue: number; status: string }>; undrafted: number[] } {
 	const issues = opts.issues ?? {};
 	const movedCards: Array<{ issue: number; status: string }> = [];
@@ -54,6 +56,7 @@ function mockClient(opts: {
 				get: async (params: { issue_number: number }) => ({
 					data: issues[params.issue_number] ?? { state: "closed", body: "" },
 				}),
+				listComments: async () => ({ data: [] }),
 				listEventsForTimeline: async (params: { issue_number: number }) => ({
 					data: opts.linkedPr?.[params.issue_number] !== undefined
 						? [{
@@ -66,11 +69,19 @@ function mockClient(opts: {
 			pulls: {
 				get: async (params: { pull_number: number }) => ({
 					data: {
-						head: { sha: "abc123" },
+						head: { sha: "abc123", ref: opts.headRefs?.[params.pull_number] ?? "impl/x" },
 						draft: opts.drafts?.[params.pull_number] ?? false,
 						node_id: `node_${params.pull_number}`,
 					},
 				}),
+				listReviews: async (params: { pull_number: number }) => ({
+					data: (opts.reviews?.[params.pull_number] ?? []).map((r) => ({
+						state: r.state,
+						body: r.body ?? "",
+						user: { login: r.user },
+					})),
+				}),
+				listReviewComments: async () => ({ data: [] }),
 			},
 			checks: {
 				listForRef: async (params: { ref: string }) => ({
@@ -207,17 +218,72 @@ describe("syncBoard", () => {
 			ci: { abc123: [{ status: "in_progress", conclusion: null }] },
 		});
 		const report = await syncBoard(client, baseConfig);
-		expect(report).toEqual({ promoted: [], done: [], toReview: [], blockedCount: 0 });
+		expect(report).toEqual({ promoted: [], done: [], toReview: [], rework: [], blockedCount: 0, cleanup: null });
 		expect(client.movedCards).toEqual([]);
 		expect(client.undrafted).toEqual([]);
+	});
+
+	it("bounces In review items back to In progress on requested changes", async () => {
+		const client = mockClient({
+			board: [{ number: 4, title: "bounced", state: "OPEN", status: "In review" }],
+			issues: { 4: { state: "open", body: "" } },
+			linkedPr: { 4: 17 },
+			reviews: { 17: [{ state: "CHANGES_REQUESTED", user: "mjaric", body: "fix the edge case" }] },
+		});
+		const report = await syncBoard(client, baseConfig);
+		expect(report.rework).toEqual([4]);
+		expect(client.movedCards).toEqual([{ issue: 4, status: "in_progress" }]);
+	});
+
+	it("does not bounce on APPROVED or COMMENTED reviews", async () => {
+		const client = mockClient({
+			board: [{ number: 4, title: "approved", state: "OPEN", status: "In review" }],
+			issues: { 4: { state: "open", body: "" } },
+			linkedPr: { 4: 17 },
+			reviews: {
+				17: [
+					{ state: "CHANGES_REQUESTED", user: "mjaric" },
+					{ state: "APPROVED", user: "mjaric" },
+				],
+			},
+		});
+		const report = await syncBoard(client, baseConfig);
+		expect(report.rework).toEqual([]);
+		expect(client.movedCards).toEqual([]);
+	});
+
+	it("passes merged head refs to local cleanup when cwd is given", async () => {
+		const client = mockClient({
+			board: [{ number: 5, title: "merged", state: "CLOSED", status: "In review" }],
+			linkedPr: { 5: 17 },
+			headRefs: { 17: "impl/5-thing" },
+		});
+		// Non-git dir → cleanup returns the NO_REPO report; the point is it runs.
+		const report = await syncBoard(client, baseConfig, "/tmp");
+		expect(report.done).toEqual([5]);
+		expect(report.cleanup).not.toBeNull();
+	});
+
+	it("skips cleanup when nothing merged", async () => {
+		const client = mockClient({ board: [] });
+		const report = await syncBoard(client, baseConfig, "/tmp");
+		expect(report.cleanup).toBeNull();
 	});
 });
 
 describe("formatSyncReport", () => {
-	it("lists promoted, review-bound, and done issues", () => {
-		const out = formatSyncReport({ promoted: [1, 2], done: [5], toReview: [4], blockedCount: 3 });
+	it("lists promoted, review-bound, rework, and done issues", () => {
+		const out = formatSyncReport({
+			promoted: [1, 2],
+			done: [5],
+			toReview: [4],
+			rework: [6],
+			blockedCount: 3,
+			cleanup: null,
+		});
 		expect(out).toContain("#1, #2");
 		expect(out).toContain("#4");
+		expect(out).toContain("#6");
 		expect(out).toContain("#5");
 		expect(out).toContain("3");
 	});

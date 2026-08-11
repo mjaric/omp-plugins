@@ -245,12 +245,12 @@ export async function getIssueDetail(
 	return { blockers, acceptance: parseAcceptance(body) };
 }
 
-/** Fetch the full issue body for prompt construction. */
-export async function getIssueBody(
+/** Fetch issue title + body (issues.get works for PRs too). */
+export async function getIssueTitleAndBody(
 	client: ForgeGitHubClient,
 	repo: string,
 	issueNumber: number,
-): Promise<string> {
+): Promise<{ title: string; body: string }> {
 	const [owner, repoName] = repo.split("/");
 
 	const response = await client.rest.issues.get({
@@ -259,7 +259,7 @@ export async function getIssueBody(
 		issue_number: issueNumber,
 	});
 
-	return response.data.body ?? "";
+	return { title: response.data.title, body: response.data.body ?? "" };
 }
 
 /** Close an issue with a comment. */

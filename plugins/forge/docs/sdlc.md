@@ -21,7 +21,7 @@ merges, and approval of process changes.
 | **Product owner** (human) | Human | Owns the spec; answers `needs-decision` issues; merges PRs; approves process changes | Spec, decisions, `main` (via merge), process rules | Writes code in the loop |
 | **Orchestrator** (`sdlc` skill, lead agent) | LLM agent | Runs one round per activation: sync → plan → dispatch (≤4 workers) → review → report; stops a round on milestone/idle/decision; repetition comes from `/loop` or the user | Board transitions via forge tools; spawns workers/reviewers | Guesses past a decision; merges; calls `gh` for board logic; loops internally |
 | **Decomposer** (`/forge decompose`) | LLM task | Turns a spec slice into GitHub issues with written acceptance criteria (test names) and blockers | Issues + acceptance checklists | Implementation |
-| **Worker** (`task` agent, isolated worktree) | LLM agent | TDD implementation of one issue: failing tests first, gate passes, draft PR `Fixes #N` | Own branch `impl/N-slug` only | Touches `main`; skips the gate; opens non-draft PRs |
+| **Worker** (`task` agent, isolated worktree) | LLM agent | TDD implementation of one issue: failing tests first, gate passes, draft PR `Fixes #N` | Own branch `impl/N-<title-slug>` only | Touches `main`; skips the gate; opens non-draft PRs |
 | **Reviewer** (`reviewer` agent) | LLM agent | Checks the diff against the acceptance contract; reports findings by severity | Nothing — read-only | Approves merges |
 | **Retrospective agent** (`forge-retrospect` skill) | LLM agent | Turns milestone data + telemetry into proposed improvements (diffs to rules/references/scripts/agents) | Proposals only | Applies anything without approval |
 | **Forge core** (plugin TypeScript) | Deterministic machinery | Board state, blocker checks, promotions, dispatch verification, CI status, review contract assembly, auth, doctor | Board card moves — strictly per rules | Anything requiring judgment |
@@ -97,7 +97,7 @@ stateDiagram-v2
   Backlog --> Ready: forge_sync — rule: unblocked AND acceptance written
   Ready --> InProgress: forge_dispatch — orchestrator, verified unblocked
   InProgress --> InReview: forge_sync — rule: linked PR AND CI green (undrafts PR)
-  InReview --> InProgress: Reviewer findings — routed back to worker
+  InReview --> InProgress: forge_sync — rule: reviewer requested changes (rework)
   InReview --> Done: HUMAN MERGES
   Done --> [*]
 ```
@@ -113,6 +113,14 @@ Notes:
 - **Draft PRs are transient.** Workers open drafts per contract; `forge_sync`
   undrafts the PR and moves the card to In review once the linked PR's CI is
   green — the review and merge gates become visible and actionable.
+- **Worker branches name the work, not the repo.** `impl/<issue>-<title-slug>`,
+  slugified from the issue title — every branch reads like the task it carries.
+- **Human review comments are first-class feedback.** `forge_sync` bounces an
+  In review card to In progress the moment a reviewer requests changes, and the
+  review contract carries the verdicts and comments to the worker.
+- **Merged work is cleaned up.** When sync closes out a merged card, it removes
+  the PR's worktree and branch locally (squash-merge aware) and prunes stale
+  remote-tracking refs.
 
 ## 5. One round of the loop
 

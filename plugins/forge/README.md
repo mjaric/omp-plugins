@@ -35,6 +35,11 @@ tokens for mechanical work**. The LLM is invoked only for reasoning tasks: decom
   written `## Acceptance` section. Checkbox state is the worker's TDD checklist: criteria are
   written (with test names) at decompose time and stay unchecked until implemented.
 - **Dispatch** — only Ready issues without open blockers; forge never merges or pushes.
+  Worker branches are `impl/<issue>-<title-slug>` (slugified from the issue title).
+- **Rework** — when a reviewer requests changes on an In review PR, the card bounces back
+  to In progress; the review contract carries the feedback to the worker.
+- **Cleanup** — after a merge reaches Done, sync removes the merged PR's worktree and
+  branch locally (squash-merge aware) and prunes stale remote-tracking refs.
 
 `/forge guide` prints the short user manual (loop order, board rules, how to read the plan,
 troubleshooting).
@@ -59,12 +64,12 @@ Both are thin adapters over the same `src/loop` modules; there is one implementa
 | `/forge promote` | — | Find unblocked + acceptance-written → move to Ready |
 | `/forge decide <N> <decision text>` | — | Record decision, close issue, report unblocked |
 | `/forge status` | — | One-liner per project (multi-repo) |
-| `/forge round` | TS | Sync board: promote unblocked backlog → Ready, green-CI In progress → In review (undraft), merged → Done |
+| `/forge round` | TS | Sync board: promote unblocked backlog → Ready, green-CI In progress → In review (undraft), requested-changes In review → back to In progress (rework), merged → Done + local worktree/branch cleanup |
 | `/forge doctor` | — | Diagnose environment + board sync; offer fixes for stale IDs |
 | `/forge dispatch <N>` | TS + LLM | Verify blockers, move card, emit worker prompt |
-| `/forge round` | TS | Sync board: promote unblocked backlog → Ready, merged → Done |
 | `/forge decompose <slice>` | LLM | Spec slice → GitHub issues |
-| `/forge review <N>` | LLM | Review PR against acceptance criteria |
+| `/forge decompose <slice>` | LLM | Spec slice → GitHub issues |
+| `/forge review <N>` | LLM | Review PR against acceptance criteria + human review feedback |
 | `/forge thinking-report` | — | Thinking-level telemetry analysis (requires `self_improvement`) |
 | `/forge retrospect [--milestone N]` | — | Milestone retrospective: findings + recommendations (requires `self_improvement`) |
 
@@ -73,9 +78,9 @@ Both are thin adapters over the same `src/loop` modules; there is one implementa
 | Tool | Approval | Effect |
 |---|---|---|
 | `forge_plan` | read | Round plan JSON: dispatchable, reviewable, promotable, blocked, needs-decision, milestone completion; nothing mutated |
-| `forge_sync` | write | Promote eligible backlog → Ready; green-CI In progress → In review (undraft PR); merged In review → Done |
-| `forge_dispatch {issue}` | write | Verify unblocked, card → In progress, return worker prompt |
-| `forge_review {number}` | read | Return the acceptance review contract for an issue/PR |
+| `forge_sync` | write | Promote eligible backlog → Ready; green-CI In progress → In review (undraft PR); requested-changes In review → back to In progress (rework); merged In review → Done + cleanup of merged-PR worktrees/branches |
+| `forge_dispatch {issue}` | write | Verify unblocked, card → In progress, return worker prompt (branch `impl/N-<title-slug>`) |
+| `forge_review {number}` | read | Return the acceptance review contract for an issue/PR, including human review feedback (verdicts + comments) |
 
 `forge_plan` caps `dispatchable` at 4 workers (the loop's concurrency ceiling).
 

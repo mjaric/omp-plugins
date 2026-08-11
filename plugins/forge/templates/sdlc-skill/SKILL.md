@@ -17,10 +17,10 @@ workers and reviewers, routing findings.
 
 | Tool | Effect | Mutates? |
 |---|---|---|
-| `forge_sync` | Promote unblocked Backlog → Ready; green-CI In progress → In review (undraft PR); merged In review → Done | Yes |
-| `forge_plan` | Round plan: dispatchable / reviewable / promotable / blocked / needs-decision / milestones | No |
+| `forge_sync` | Promote unblocked Backlog → Ready; green-CI In progress → In review (undraft PR); requested-changes In review → back to In progress (rework); merged In review → Done + local worktree/branch cleanup | Yes |
+| `forge_plan` | Round plan: dispatchable / reviewable / rework / promotable / blocked / needs-decision / milestones | No |
 | `forge_dispatch {issue}` | Verify unblocked, card → In progress, returns the worker prompt | Yes |
-| `forge_review {number}` | Acceptance review contract for an issue/PR | No |
+| `forge_review {number}` | Acceptance review contract (includes human review feedback) for an issue/PR | No |
 | `task` | Spawn worker / reviewer subagents (isolated worktrees) | Yes |
 | `hub` | Watch in-flight worker jobs (`wait`); route findings back (`send`) | — |
 
@@ -44,14 +44,19 @@ source of truth, so your next round simply adapts.
    - Idle (nothing actionable, nothing in flight) → STOP. Report that the
      board is idle and the loop can be disabled.
 4. **Review** everything `reviewable`:
-   - `forge_review {number}` → contract; spawn the bundled `reviewer` agent
-     via `task`: review the change for issue #N against the contract, diff at
-     `pr://<PR>/diff/all`; check every criterion has a real test, the gate
-     passes, no stubs/placeholders.
+   - `forge_review {number}` → contract (acceptance criteria + any human review
+     comments); spawn the bundled `reviewer` agent via `task`: review the change
+     for issue #N against the contract, diff at `pr://<PR>/diff/all`; check every
+     criterion has a real test, the gate passes, no stubs/placeholders, and every
+     human feedback item is addressed.
    - Clean → leave for the human merge (card is already In review).
    - Findings → route back to the same worker: `hub send` when the worker is
      parked, else a follow-up `task` carrying the findings.
-5. **Dispatch** everything `dispatchable`, capped at 4:
+5. **Rework** everything `rework`: these were bounced from In review after a
+   reviewer requested changes. Their PR already exists — route the feedback to
+   the worker (`hub send` if parked, else a follow-up `task` with the contract's
+   Human review feedback section) so it can push fixes. Do NOT re-dispatch.
+6. **Dispatch** everything `dispatchable`, capped at 4:
    - `forge_dispatch {issue}` per issue → worker prompts.
    - ONE `task` call with parallel `tasks[]`: each `agent: "task"`,
      `isolated: true`, `task` = the returned prompt verbatim.
@@ -59,7 +64,7 @@ source of truth, so your next round simply adapts.
      PR `Fixes #N`). Add nothing unless `rules/` says so.
    - If `rules/` names a stack-specific agent (e.g. `rust-impl`) and it
      exists, use it instead of `task`.
-6. **Settle in-flight work** — if workers are still running and nothing else
+7. **Settle in-flight work** — if workers are still running and nothing else
    is actionable, `hub wait` on their jobs so their results land this round;
    then re-run steps 1–4 once before reporting. If waiting is unavailable,
    yield — results wake the session and the next round picks them up.
@@ -70,6 +75,7 @@ End every round with a terse report:
 
 - dispatched: issue numbers + worker handles
 - reviewed: PR numbers + verdict (clean / findings)
+- rework: issue numbers bounced for requested changes
 - blocked: issue numbers + reason
 - decisions needed: issue numbers
 - milestone progress: done/total for the active milestone

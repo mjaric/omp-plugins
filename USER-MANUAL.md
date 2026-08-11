@@ -66,7 +66,13 @@ arhitekturu i dizajn pogledajte `docs/specs/` u ovom repozitorijumu.
   čovek samo merge-uje PR-ove.
 - **Paralelni TDD worker-i.** Do 4 worker-a istovremeno u izolovanim
   worktree-ovima; svaki dobija prompt sklopljen iz issue-ja (Scope + Spec
-  references + Acceptance + gate komande).
+  references + Acceptance + gate komande). Grana je `impl/N-<slug-naslova>`.
+- **Review feedback koji ne propada.** Ako reviewer traži izmene (CHANGES_REQUESTED),
+  `forge_sync` vraća karticu In review → In progress (rework); ugovor za review
+  nosi komentare worker-u. `COMMENTED`/`DISMISSED` ne poništavaju verdikt.
+- **Auto-čistić posle merge-a.** Kad PR stigne u Done, sync uklanja worktree + granu
+  lokalno (dirty preskače, nikad na silu; squash-merge aware) i prune-uje
+  remote-tracking refove.
 - **Kontrolisane odluke.** Ambiguitet koji spec ne rešava postaje
   `needs-decision` issue i petlja **staje** dok čovek ne odluči
   (`/forge decide`). Nikad se ne nagađa.
@@ -135,9 +141,9 @@ radi uz njih u istoj sesiji (npr. istraživački repo sa spec-om u markdown-u).
 | `smem_stats` | session-memory | — | Indeks + telemetrijski agregati |
 | `smem_status` | session-memory | — | Zdravlje endpoint lanca, veličina indeksa, aktivni režim |
 | `forge_plan` | forge | — | Plan runde (read-only): dispatchable / promotable / blocked / reviewable / milestone-i |
-| `forge_sync` | forge | — | Promote eligible Backlog → Ready; green-CI In progress → In review (undraft PR-a); merged In review → Done |
-| `forge_dispatch` | forge | `issue` | Verifikacija blockera, kartica → In progress, vraća worker prompt |
-| `forge_review` | forge | `number` | Acceptance ugovor (review contract) za issue/PR |
+| `forge_sync` | forge | — | Promote Backlog → Ready; green-CI In progress → In review (undraft PR-a); requested-changes In review → back to In progress (rework); merged → Done + cleanup merged-PR worktree/branch lokalno (squash-merge aware) |
+| `forge_dispatch` | forge | `issue` | Verifikacija blockera, kartica → In progress, vraća worker prompt (granu `impl/N-<slug-naslova>`) |
+| `forge_review` | forge | `number` | Acceptance ugovor za issue/PR **+ human review feedback** (verdikti + komentari) |
 
 ---
 
@@ -239,9 +245,10 @@ ako nešto ne može da se inicijalizuje, sesija nastavlja normalno da radi.
    sekcijom prelaze u Ready.
 5. Pokrenite rundu: recite agentu *„pokreni petlju"* (ili `run a round`) — `sdlc`
    skill odradi jedan krug: `forge_sync` → `forge_plan` → dispatch do 4 TDD
-   worker-a (izolovani worktree-ovi) → review PR-ova → izveštaj. Za kontinuirani
-   rad: `/loop Run one round of the sdlc loop.` — svaki yield ponovo pokreće
-   krug. **Vi merge-ujete svaki PR** — to je jedina ručna granica.
+   worker-a (izolovani worktree-ovi) → review PR-ova (sa human review komentarima)
+   → izveštaj. Za kontinuirani rad: `/loop Run one round of the sdlc loop.` —
+   svaki yield ponovo pokreće krug. **Vi merge-ujete svaki PR** — to je jedina
+   ručna granica. Posle merge-a sync briše worktree/granu automatski.
 6. Stanje u svakom trenutku: `/forge plan` ili `/forge board`; problemi:
    `/forge doctor`.
 

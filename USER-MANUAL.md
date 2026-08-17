@@ -114,7 +114,7 @@ radi uz njih u istoj sesiji (npr. istraživački repo sa spec-om u markdown-u).
 | `/smem config <key> <json>` | session-memory | Postavljanje jednog ključa (vidi §7.4) |
 | `/smem rebuild` | session-memory | Ponovno embedovanje svih chunk-ova (posle promene modela) |
 | `/smem clear` | session-memory | Brisanje svih chunk-ova iz indeksa |
-| `/forge setup` | forge | Interaktivno otkriva board, piše `.forge.toml`, instalira sdlc + retrospect skill-ove |
+| `/forge setup` | forge | Interaktivno otkriva board-ove koje poseduje owner repo-a (org ili lični nalog), linked board-ovi prvi; piše `.forge.toml`, instalira sdlc + retrospect skill-ove; ownership se proverava i pri svakom runtime pristupu board-u |
 | `/forge guide` | forge | Kratak korisnički vodič: redosled petlje, pravila board-a, čitanje plana, troubleshooting |
 | `/forge board [filter]` | forge | Tabela board-a grupisana po Status-u (filteri: `backlog`, `ready`, `in_progress`, `in_review`, `done`, `slice-N`) |
 | `/forge plan` | forge | Plan runde bez mutacija: dispatchable / promotable / blocked / not ready / reviewable / milestone-i |
@@ -237,8 +237,10 @@ ako nešto ne može da se inicijalizuje, sesija nastavlja normalno da radi.
 1. `gh auth login` (ili `GH_TOKEN`). Na GitHub-u napravite Projects v2 board
    sa Status single-select poljem (Backlog / Ready / In progress / In review /
    Done).
-2. U repo-u sa spec-om: `/forge setup` — otkriva board, piše `.forge.toml`,
-   instalira `sdlc` i `forge-retrospect` skill-ove u `.omp/skills/`.
+2. U repo-u sa spec-om: `/forge setup` — otkriva board-ove koje poseduje owner repo-a
+   (org ili lični nalog), linked board-ovi na vrhu liste, piše `.forge.toml`,
+   instalira `sdlc` i `forge-retrospect` skill-ove u `.omp/skills/`; ownership se
+   ponovo proverava pri svakom pristupu board-u.
 3. `/forge decompose 1` — LLM pretvara prvi slice spec-a u Backlog issue-e sa
    napisanim acceptance kriterijumima.
 4. `/forge promote` — issue-i bez otvorenih blockera i sa napisanom Acceptance

@@ -19,7 +19,12 @@ import { renderBoard, type BoardRenderer } from "./board-render";
 import { getForgeArgumentCompletions } from "./forge-completions";
 import { fetchStatusField, getBoardState, moveCard } from "../github/board";
 import { getGitHubClient, type ForgeGitHubClient } from "../github/client";
-import { loadConfig } from "../config/forge-config-loader";
+import { getOriginRemote, normalizeRepoId } from "../config/git-remote";
+import {
+	discoverProjectsForRepo,
+	fetchProjectOwner,
+	type DiscoveredProject,
+} from "../github/projects";
 import type { SingleProjectConfig, ForgeConfig } from "../config/forge-toml";
 import { getBlockers, getAcceptanceStatus, closeIssueWithComment } from "../github/issue";
 import { assembleReviewContract, formatReviewContract } from "../github/pr";
@@ -40,15 +45,17 @@ import {
 	checkConfigExists,
 	checkGhAuth,
 	checkBinary,
+	extractGateBinaries,
 	checkBoardExists,
 	checkBoardFieldId,
 	checkBoardOptions,
-	extractGateBinaries,
+	checkProjectOwnership,
 	assembleReport,
 	formatDoctorReport,
 	type DoctorCheck,
 } from "../doctor/doctor";
 import { serializeForgeToml } from "../config/forge-toml";
+import { loadConfig } from "../config/forge-config-loader";
 import { join } from "node:path";
 
 /** Parse raw args string into [subcommand, ...rest]. */
@@ -378,40 +385,59 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 	const client = requireClient(ctx);
 	if (client === null) return;
 
+	// Prefill from the origin remote — the repo's owner decides whose
+	// boards we may list: org repos use org boards, personal repos use
+	// the owner's personal boards. Ownership is never mixed.
+	const origin = getOriginRemote(ctx.cwd);
+	const fallback = origin !== null ? normalizeRepoId(origin) : "owner/name";
 	let repo = "";
 	if (ctx.hasUI) {
-		repo = await ctx.ui.input("GitHub repo (owner/name):", "owner/name") ?? "";
+		repo = await ctx.ui.input("GitHub repo (owner/name):", fallback) ?? "";
 	}
 	if (repo.length === 0) {
 		if (ctx.hasUI) ctx.ui.notify("forge setup: cancelled.", "warning");
 		return;
 	}
 
-	// Query user's projects
-	const query = `
-		query {
-			viewer {
-				projectsV2(first: 20) {
-					nodes { id title }
-				}
-			}
-		}`;
-	const projectsResult = await client.graphql<{
-		viewer: { projectsV2: { nodes: Array<{ id: string; title: string }> } };
-	}>(query);
+	const match = /^([^/\s]+)\/([^/\s]+)$/.exec(repo);
+	if (match === null) {
+		if (ctx.hasUI) ctx.ui.notify("forge setup: repo must be 'owner/name'.", "error");
+		return;
+	}
+	const [, owner, name] = match;
+	if (owner === undefined || name === undefined) return;
 
-	const projects = projectsResult.viewer.projectsV2.nodes;
+	const { ownership, repo: canonicalRepo, projects } =
+		await discoverProjectsForRepo(client, owner, name);
+	if (ownership === null) {
+		if (ctx.hasUI) {
+			ctx.ui.notify(
+				`forge setup: repository ${repo} not found or not accessible with the current token.`,
+				"error",
+			);
+		}
+		return;
+	}
 	if (projects.length === 0) {
-		if (ctx.hasUI) ctx.ui.notify("forge setup: no Projects v2 boards found. Create one first.", "error");
+		if (ctx.hasUI) {
+			ctx.ui.notify(
+				`forge setup: no Projects v2 boards owned by ${ownership.login}. Create one first.`,
+				"error",
+			);
+		}
 		return;
 	}
 
-	let selectedProject: { id: string; title: string } | undefined;
+	const kindLabel = ownership.kind === "org" ? "organization" : "personal";
+	let selectedProject: DiscoveredProject | undefined;
 	if (ctx.hasUI && ctx.ui.askDialog !== undefined) {
 		const result = await ctx.ui.askDialog([{
 			id: "project",
-			question: "Which board tracks this project?",
-			options: projects.map((p) => ({ label: p.title, description: p.id })),
+			question: `Which board tracks this project? (owner: ${ownership.login} · ${kindLabel})`,
+			options: projects.map((p) => ({
+				label: p.title,
+				description: p.linked ? `linked to ${repo} · ${p.id}` : p.id,
+			})),
 		}]);
 		if (result === undefined) {
 			if (ctx.hasUI) ctx.ui.notify("forge setup: cancelled.", "warning");
@@ -455,7 +481,7 @@ async function cmdSetup(args: string[], ctx: ExtensionCommandContext): Promise<v
 	const gate = ["cargo test", "cargo clippy --all-targets -- -D warnings"];
 
 	const toml = [
-		`repo = "${repo}"`,
+		`repo = "${canonicalRepo ?? repo}"`,
 		`project_id = "${selectedProject.id}"`,
 		`status_field_id = "${statusField.fieldId}"`,
 		`status_options = { backlog = "${findOpt(["Backlog"])}", ready = "${findOpt(["Ready"])}", in_progress = "${findOpt(["In progress", "In Progress"])}", in_review = "${findOpt(["In review", "In Review"])}", done = "${findOpt(["Done"])}" }`,
@@ -647,6 +673,8 @@ async function cmdDoctor(
 		checks.push(checkBoardExists(fieldInfo, singleConfig));
 		checks.push(checkBoardFieldId(fieldInfo, singleConfig));
 		checks.push(checkBoardOptions(fieldInfo, singleConfig));
+		const ownership = await fetchProjectOwner(client, singleConfig.projectId);
+		checks.push(checkProjectOwnership(ownership, singleConfig));
 	}
 
 	const report = assembleReport(checks);

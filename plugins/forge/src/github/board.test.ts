@@ -50,6 +50,7 @@ describe("board.getBoardState", () => {
 		const client = mockClient({
 			board: {
 				node: {
+					owner: { __typename: "User", login: "mjaric" },
 					items: {
 						nodes: [
 							{
@@ -107,6 +108,7 @@ describe("board.getBoardState", () => {
 		const client = mockClient({
 			board: {
 				node: {
+					owner: { __typename: "User", login: "mjaric" },
 					items: {
 						nodes: [
 							{ content: null, fieldValues: { nodes: [] } },
@@ -122,11 +124,26 @@ describe("board.getBoardState", () => {
 
 	it("handles empty board", async () => {
 		const client = mockClient({
-			board: { node: { items: { nodes: [] } } },
+			board: { node: { owner: { __typename: "User", login: "mjaric" }, items: { nodes: [] } } },
 		});
 
 		const state = await getBoardState(client, makeConfig());
 		expect(state.items).toHaveLength(0);
+	});
+
+	it("throws ownership mismatch when the board owner differs from the repo owner", async () => {
+		const client = mockClient({
+			board: {
+				node: {
+					owner: { __typename: "Organization", login: "SomeoneElse" },
+					items: { nodes: [] },
+				},
+			},
+		});
+
+		await expect(getBoardState(client, makeConfig())).rejects.toThrow(
+			/ownership mismatch.*SomeoneElse.*mjaric\/smith/,
+		);
 	});
 });
 
@@ -135,6 +152,7 @@ describe("board.moveCard", () => {
 		const client = mockClient({
 			board: {
 				node: {
+					owner: { __typename: "User", login: "mjaric" },
 					items: {
 						nodes: [
 							{
@@ -169,7 +187,7 @@ describe("board.moveCard", () => {
 
 	it("throws if issue not found on board", async () => {
 		const client = mockClient({
-			board: { node: { items: { nodes: [] } } },
+			board: { node: { owner: { __typename: "User", login: "mjaric" }, items: { nodes: [] } } },
 		});
 
 		expect(moveCard(client, makeConfig(), 999, "ready")).rejects.toThrow("not found on board");

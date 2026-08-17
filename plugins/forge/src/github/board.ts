@@ -6,8 +6,9 @@
  * and moves cards between status options.
  */
 
-import type { SingleProjectConfig, StatusOptions } from "../config/forge-toml";
 import type { ForgeGitHubClient } from "./client";
+import { assertBoardOwnership, type OwnerNode } from "./projects";
+import type { SingleProjectConfig, StatusOptions } from "../config/forge-toml";
 
 export interface BoardItem {
 	issueNumber: number;
@@ -62,6 +63,7 @@ items(first: 100) {
 }`;
 
 interface ProjectNode {
+	owner: OwnerNode | null;
 	items: {
 		nodes: Array<{
 			id: string;
@@ -126,15 +128,22 @@ export async function getBoardState(
 	const query = `
 		query($projectId: ID!) {
 			node(id: $projectId) {
-				... on ProjectV2 { ${ITEMS_FRAGMENT} }
+				... on ProjectV2 {
+					owner {
+						__typename
+						... on User { login }
+						... on Organization { login }
+					}
+					${ITEMS_FRAGMENT}
+				}
 			}
 		}`;
-
-	const result = await client.graphql<{ node: ProjectNode }>(query, {
+	const result = await client.graphql<{ node: ProjectNode | null }>(query, {
 		projectId: config.projectId,
 	});
 
-	return parseProjectNode(result.node);
+	assertBoardOwnership(config, result.node?.owner);
+	return parseProjectNode(result.node as ProjectNode);
 }
 
 /** Status single-select field discovered on a project board. */
@@ -206,6 +215,11 @@ async function findItemId(
 		query($projectId: ID!) {
 			node(id: $projectId) {
 				... on ProjectV2 {
+					owner {
+						__typename
+						... on User { login }
+						... on Organization { login }
+					}
 					items(first: 100) {
 						nodes {
 							id
@@ -218,16 +232,19 @@ async function findItemId(
 
 	const result = await client.graphql<{
 		node: {
+			owner: OwnerNode | null;
 			items: {
 				nodes: Array<{
 					id: string;
 					content: { number: number } | null;
 				}>;
 			};
-		};
+		} | null;
 	}>(query, { projectId: config.projectId });
 
-	for (const item of result.node.items.nodes) {
+	assertBoardOwnership(config, result.node?.owner);
+
+	for (const item of result.node?.items.nodes ?? []) {
 		if (item.content?.number === issueNumber) {
 			return item.id;
 		}

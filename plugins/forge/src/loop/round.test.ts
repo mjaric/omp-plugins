@@ -98,6 +98,7 @@ function mockClient(opts: {
 			if (query.includes("fieldValues(first: 30)")) {
 				return {
 					node: {
+						owner: { __typename: "User", login: "mjaric" },
 						id: "PVT_test123",
 						items: {
 							nodes: opts.board.map((item) => ({
@@ -112,6 +113,7 @@ function mockClient(opts: {
 			if (query.includes("content { ... on Issue { number } }")) {
 				return {
 					node: {
+						owner: { __typename: "User", login: "mjaric" },
 						items: {
 							nodes: opts.board.map((item) => ({
 								id: `item_${item.number}`,

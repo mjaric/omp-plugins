@@ -11,6 +11,7 @@ import {
 	checkBoardExists,
 	checkBoardFieldId,
 	checkBoardOptions,
+	checkProjectOwnership,
 	findOptionMismatches,
 	formatDoctorReport,
 	type BoardFieldInfo,
@@ -255,5 +256,37 @@ describe("doctor formatDoctorReport", () => {
 		]);
 		const text = formatDoctorReport(report);
 		expect(text).toContain("Auto-fixable");
+	});
+});
+
+describe("doctor checkProjectOwnership", () => {
+	it("ok when the board owner matches the repo owner", () => {
+		const check = checkProjectOwnership(
+			{ login: "mjaric", kind: "user" },
+			makeConfig({ projectId: "PVT_test" }),
+		);
+		expect(check.id).toBe("project-ownership");
+		expect(check.category).toBe("github");
+		expect(check.severity).toBe("ok");
+		expect(check.detail).toContain("mjaric");
+		expect(check.detail).toContain("personal");
+	});
+
+	it("error when the board owner cannot be read", () => {
+		const check = checkProjectOwnership(null, makeConfig({ projectId: "PVT_test" }));
+		expect(check.severity).toBe("error");
+		expect(check.detail).toContain("Cannot read owner of PVT_test");
+	});
+
+	it("error when the board owner differs from the repo owner", () => {
+		const check = checkProjectOwnership(
+			{ login: "DreamforgeRS", kind: "org" },
+			makeConfig({ projectId: "PVT_test" }),
+		);
+		expect(check.severity).toBe("error");
+		expect(check.detail).toContain("DreamforgeRS");
+		expect(check.detail).toContain("organization");
+		expect(check.detail).toContain("mjaric/smith");
+		expect(check.detail).toContain("/forge setup");
 	});
 });

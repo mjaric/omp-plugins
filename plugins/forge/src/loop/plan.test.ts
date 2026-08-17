@@ -70,6 +70,7 @@ function mockClient(opts: {
 			}
 			return {
 				node: {
+					owner: { __typename: "User", login: "mjaric" },
 					id: "PVT_test123",
 					items: {
 						nodes: opts.board.map((item) => ({

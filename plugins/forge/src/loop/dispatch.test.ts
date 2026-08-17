@@ -51,6 +51,7 @@ function mockClient(opts: {
 				const numbers = opts.boardNumbers ?? Object.keys(opts.issues).map(Number);
 				return {
 					node: {
+					owner: { __typename: "User", login: "mjaric" },
 						items: {
 							nodes: numbers.map((n) => ({
 								id: `item_${n}`,

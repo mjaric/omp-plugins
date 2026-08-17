@@ -14,6 +14,7 @@
 
 import type { SingleProjectConfig, StatusOptions } from "../config/forge-toml";
 import type { StatusFieldInfo } from "../github/board";
+import { ownershipMatches, type ProjectOwnership } from "../github/projects";
 import { resolveGhToken } from "../github/auth";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -208,6 +209,37 @@ export function checkBoardOptions(
 			? "All status option IDs are current."
 			: `${mismatches.length} option(s) mismatched: ${mismatches.join(", ")}. Board options may have been recreated.`,
 		fixable: !allMatch,
+	};
+}
+
+/** Check 7: Board owner matches the repo owner (no mixed ownership). */
+export function checkProjectOwnership(
+	ownership: ProjectOwnership | null,
+	config: SingleProjectConfig,
+): DoctorCheck {
+	if (ownership === null) {
+		return {
+			id: "project-ownership",
+			description: "Board owner matches repo owner",
+			category: "github",
+			severity: "error",
+			detail: `Cannot read owner of ${config.projectId}. Check project_id or token scopes.`,
+			fixable: false,
+		};
+	}
+
+	const kindLabel = ownership.kind === "org" ? "organization" : "personal";
+	const matches = ownershipMatches(config.repo, ownership.login);
+	return {
+		id: "project-ownership",
+		description: "Board owner matches repo owner",
+		category: "github",
+		severity: matches ? "ok" : "error",
+		detail: matches
+			? `Board owned by ${ownership.login} (${kindLabel}), same as repo.`
+			: `Board owned by ${ownership.login} (${kindLabel}) but repo is '${config.repo}'. ` +
+				"A repo must use a board owned by the same account or org — re-run `/forge setup`.",
+		fixable: false,
 	};
 }
 

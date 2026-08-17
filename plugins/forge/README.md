@@ -40,6 +40,10 @@ tokens for mechanical work**. The LLM is invoked only for reasoning tasks: decom
   to In progress; the review contract carries the feedback to the worker.
 - **Cleanup** — after a merge reaches Done, sync removes the merged PR's worktree and
   branch locally (squash-merge aware) and prunes stale remote-tracking refs.
+- **Ownership** — a repo's board must be owned by the same account that owns the repo.
+  `/forge setup` lists only boards owned by the repo's owner (organization or personal),
+  linked-to-repo boards first, and every board read/mutation re-checks ownership at
+  runtime, so a stale `.forge.toml` can never drive another account's board.
 
 `/forge guide` prints the short user manual (loop order, board rules, how to read the plan,
 troubleshooting).
@@ -58,7 +62,7 @@ Both are thin adapters over the same `src/loop` modules; there is one implementa
 
 | Command | LLM? | Effect |
 |---|---|---|
-| `/forge setup` | — | Interactive: discover board, detect fields, write `.forge.toml`, install loop skills |
+| `/forge setup` | — | Interactive: discover boards owned by the repo's owner (org or personal), linked boards first, detect fields, write `.forge.toml`, install loop skills; ownership is enforced at runtime on every board access |
 | `/forge board [filter]` | — | Board snapshot grouped by Status |
 | `/forge plan` | — | Query-only round plan: dispatchable / reviewable / promotable / blocked / milestones |
 | `/forge promote` | — | Find unblocked + acceptance-written → move to Ready |
